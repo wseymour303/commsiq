@@ -2,140 +2,169 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
-import { toRadarItem } from '@/lib/radar';
+import { matchesRadarFilter, toRadarItem } from '@/lib/radar';
 import type { Assessment, CommunicationEvent, CustomerState, RadarFilter, RadarItem } from '@/lib/types';
 import { ArrowIcon, CheckIcon, ClockIcon, RefreshIcon, SparkIcon } from './icons';
 
 const rooftopId = process.env.NEXT_PUBLIC_COMMUNICATIONIQ_ROOFTOP_ID;
 
-const filters: { id: RadarFilter; label: string }[] = [
-  { id: 'attention', label: 'Needs attention' },
-  { id: 'buying', label: 'Buying now' },
-  { id: 'waiting', label: 'Waiting on us' },
-  { id: 'risk', label: 'At risk' },
-  { id: 'future', label: 'Future' },
-  { id: 'advocate', label: 'Advocates' }
+const filters: Array<{ id: RadarFilter; label: string }> = [
+  { id: 'attention', label: 'Needs Attention' },
+  { id: 'buying', label: 'Buying Now' },
+  { id: 'waiting', label: 'Waiting on Us' },
+  { id: 'price', label: 'Price / Payment' },
+  { id: 'appointment', label: 'Appointments' },
+  { id: 'risk', label: 'CX Risk' },
+  { id: 'future', label: 'Future Follow-Up' },
+  { id: 'overcontact', label: 'Over-Contact' },
+  { id: 'dnc', label: 'Do Not Contact' },
+  { id: 'advocate', label: 'Positive' },
+  { id: 'all', label: 'All' }
 ];
 
-const fallbackItems: RadarItem[] = [
-  {
-    customer: { id:'demo-1', rooftop_id:'demo', customer_key:'demo-1', customer_name:'Active buyer', salesperson:'Aaron Bergen', lead_status:'Working', lead_source:'Internet', first_activity_at:null, last_activity_at:new Date().toISOString(), last_inbound_at:new Date().toISOString(), last_outbound_at:null, last_human_outbound_at:null, inbound_count:2, outbound_count:2, automated_outbound_count:1, human_outbound_count:1, awaiting_human_response:true, minutes_waiting:18 },
-    assessment: { id:'a1', customer_key:'demo-1', assessed_at:new Date().toISOString(), sentiment_score:12, sentiment_label:'Constructive', engagement_score:88, purchase_intent_score:94, communication_quality_score:76, risk_score:63, opportunity_score:94, overall_score:82, lifecycle_stage:'Negotiation', primary_intent:'Purchase', primary_objection:'Price', urgency:'high', summary:'Customer reaffirmed a firm out-the-door target and indicated willingness to visit if the deal can be made.', rationale:'High purchase intent with one explicit objection.', recommended_next_action:'Respond now using One Price positioning and convert the price discussion into a test drive or in-store appointment.', recommended_owner:'Salesperson', recommended_due_at:null },
-    events: [], category:'waiting', priority:'high'
-  },
-  {
-    customer: { id:'demo-2', rooftop_id:'demo', customer_key:'demo-2', customer_name:'Ownership follow-up', salesperson:'Aaron Bergen', lead_status:'Delivered', lead_source:'Digital Retail', first_activity_at:null, last_activity_at:new Date().toISOString(), last_inbound_at:new Date().toISOString(), last_outbound_at:new Date().toISOString(), last_human_outbound_at:new Date().toISOString(), inbound_count:1, outbound_count:1, automated_outbound_count:0, human_outbound_count:1, awaiting_human_response:false, minutes_waiting:null },
-    assessment: { id:'a2', customer_key:'demo-2', assessed_at:new Date().toISOString(), sentiment_score:5, sentiment_label:'Neutral', engagement_score:66, purchase_intent_score:10, communication_quality_score:78, risk_score:61, opportunity_score:42, overall_score:71, lifecycle_stage:'Post-sale', primary_intent:'Parts status', primary_objection:null, urgency:'medium', summary:'Customer asked for the status of accessories and was promised a Monday parts check.', rationale:'A promised follow-up should be closed before the customer needs to ask again.', recommended_next_action:'Verify parts status first thing Monday and proactively update the customer.', recommended_owner:'Salesperson', recommended_due_at:null },
-    events: [], category:'attention', priority:'medium'
-  },
-  {
-    customer: { id:'demo-3', rooftop_id:'demo', customer_key:'demo-3', customer_name:'Future shopper', salesperson:'Assigned rep', lead_status:'Working', lead_source:'Internet', first_activity_at:null, last_activity_at:new Date().toISOString(), last_inbound_at:new Date().toISOString(), last_outbound_at:new Date().toISOString(), last_human_outbound_at:null, inbound_count:1, outbound_count:2, automated_outbound_count:2, human_outbound_count:0, awaiting_human_response:false, minutes_waiting:null },
-    assessment: { id:'a3', customer_key:'demo-3', assessed_at:new Date().toISOString(), sentiment_score:0, sentiment_label:'Neutral', engagement_score:32, purchase_intent_score:35, communication_quality_score:62, risk_score:24, opportunity_score:38, overall_score:60, lifecycle_stage:'Future follow-up', primary_intent:'Shop later', primary_objection:'Timing', urgency:'low', summary:'Customer explicitly said they will not have time to shop until after September 26.', rationale:'Additional outreach before the stated date risks over-contact.', recommended_next_action:'Pause unnecessary automation and surface a salesperson follow-up for September 27.', recommended_owner:'Assigned salesperson', recommended_due_at:null },
-    events: [], category:'future', priority:'low'
-  }
-];
+const queueLabel: Record<RadarFilter, string> = {
+  attention: 'Needs attention', buying: 'Buying now', waiting: 'Waiting on us', price: 'Price / payment', appointment: 'Appointment opportunity', future: 'Future follow-up', overcontact: 'Over-contact risk', advocate: 'Positive experience', risk: 'Customer experience risk', dnc: 'Do not contact', all: 'All conversations'
+};
 
 function mins(value: number | null) {
   if (value == null) return '—';
   if (value < 60) return `${value}m`;
-  const h = Math.floor(value / 60); const m = value % 60;
-  return m ? `${h}h ${m}m` : `${h}h`;
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function scoreTone(score: number | null | undefined) {
-  const s = score ?? 0;
-  if (s >= 75) return 'text-[var(--success)]';
-  if (s >= 50) return 'text-[var(--warning)]';
+function relativeTime(value: string | null) {
+  if (!value) return 'Unknown';
+  const deltaMinutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
+  if (deltaMinutes < 60) return `${deltaMinutes}m ago`;
+  if (deltaMinutes < 1440) return `${Math.floor(deltaMinutes / 60)}h ago`;
+  return `${Math.floor(deltaMinutes / 1440)}d ago`;
+}
+
+function dueLabel(value: string | null | undefined) {
+  if (!value) return 'No deadline set';
+  const due = new Date(value);
+  const minutes = Math.round((due.getTime() - Date.now()) / 60000);
+  if (minutes <= 0) return 'Due now';
+  if (minutes < 60) return `Due in ${minutes}m`;
+  if (minutes < 1440) return `Due in ${Math.ceil(minutes / 60)}h`;
+  return `Due ${due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+}
+
+function scoreTone(score: number | null | undefined, inverse = false) {
+  const value = score ?? 0;
+  if (inverse) {
+    if (value >= 70) return 'text-[var(--danger)]';
+    if (value >= 45) return 'text-[var(--warning)]';
+    return 'text-[var(--success)]';
+  }
+  if (value >= 75) return 'text-[var(--success)]';
+  if (value >= 50) return 'text-[var(--warning)]';
   return 'text-[var(--danger)]';
 }
 
 function priorityClass(priority: RadarItem['priority']) {
-  if (priority === 'critical') return 'border-l-[var(--danger)] bg-[var(--danger-soft)]/55';
-  if (priority === 'high') return 'border-l-[var(--warning)] bg-[var(--warning-soft)]/55';
+  if (priority === 'critical') return 'border-l-[var(--danger)] bg-[var(--danger-soft)]/45';
+  if (priority === 'high') return 'border-l-[var(--warning)] bg-[var(--warning-soft)]/40';
   if (priority === 'medium') return 'border-l-[var(--accent)] bg-white';
   return 'border-l-[var(--border-strong)] bg-white';
 }
 
+function sortRadarItems(items: RadarItem[]) {
+  const weight = { critical: 4, high: 3, medium: 2, low: 1 } as const;
+  return [...items].sort((a, b) => {
+    const priorityDelta = weight[b.priority] - weight[a.priority];
+    if (priorityDelta) return priorityDelta;
+    const aScore = (a.assessment?.overall_score ?? 0) + (a.assessment?.opportunity_score ?? 0) + (a.assessment?.risk_score ?? 0);
+    const bScore = (b.assessment?.overall_score ?? 0) + (b.assessment?.opportunity_score ?? 0) + (b.assessment?.risk_score ?? 0);
+    return bScore - aScore;
+  });
+}
+
 export function ManagerRadar() {
-  const [items, setItems] = useState<RadarItem[]>(fallbackItems);
+  const [items, setItems] = useState<RadarItem[]>([]);
   const [filter, setFilter] = useState<RadarFilter>('attention');
-  const [selectedKey, setSelectedKey] = useState(fallbackItems[0].customer.customer_key);
+  const [selectedKey, setSelectedKey] = useState('');
   const [loading, setLoading] = useState(false);
-  const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const supabase = getSupabaseBrowserClient();
-    if (!supabase || !rooftopId) { setLive(false); return; }
+    if (!supabase || !rooftopId) return;
     setLoading(true); setError(null);
     try {
-      const { data: states, error: stateError } = await supabase
-        .from('communication_customer_state').select('*').eq('rooftop_id', rooftopId).order('last_activity_at', { ascending: false }).limit(75);
+      const { data: states, error: stateError } = await supabase.from('communication_customer_state').select('*').eq('rooftop_id', rooftopId).order('last_activity_at', { ascending: false }).limit(100);
       if (stateError) throw stateError;
-      if (!states?.length) { setLive(false); return; }
+      const customerStates = (states ?? []) as CustomerState[];
+      if (!customerStates.length) { setItems([]); return; }
 
-      const keys = states.map((s: CustomerState) => s.customer_key);
-      const { data: assessments } = await supabase.from('communication_ai_assessments').select('*').eq('rooftop_id', rooftopId).in('customer_key', keys).order('assessed_at', { ascending: false });
+      const keys = customerStates.map(state => state.customer_key);
+      const { data: assessments, error: assessmentError } = await supabase.from('communication_ai_assessments').select('*').eq('rooftop_id', rooftopId).in('customer_key', keys).order('assessed_at', { ascending: false });
+      if (assessmentError) throw assessmentError;
       const latest = new Map<string, Assessment>();
-      for (const a of (assessments ?? []) as Assessment[]) if (!latest.has(a.customer_key)) latest.set(a.customer_key, a);
+      for (const assessment of (assessments ?? []) as Assessment[]) if (!latest.has(assessment.customer_key)) latest.set(assessment.customer_key, assessment);
 
-      const { data: eventRows } = await supabase.from('communication_events').select('id,customer_key,customer_name,salesperson,activity_at,direction,channel,communication_type,message_clean,actor_type').eq('rooftop_id', rooftopId).in('customer_key', keys).order('activity_at', { ascending: false }).limit(400);
+      const { data: eventRows, error: eventError } = await supabase.from('communication_events').select('id,customer_key,customer_name,salesperson,activity_at,direction,channel,communication_type,message_clean,actor_type').eq('rooftop_id', rooftopId).in('customer_key', keys).order('activity_at', { ascending: false }).limit(800);
+      if (eventError) throw eventError;
       const eventsByKey = new Map<string, CommunicationEvent[]>();
-      for (const e of (eventRows ?? []) as CommunicationEvent[]) {
-        if (!e.customer_key) continue;
-        const list = eventsByKey.get(e.customer_key) ?? [];
-        if (list.length < 8) list.push(e);
-        eventsByKey.set(e.customer_key, list);
+      for (const event of (eventRows ?? []) as CommunicationEvent[]) {
+        if (!event.customer_key) continue;
+        const list = eventsByKey.get(event.customer_key) ?? [];
+        if (list.length < 12) list.push(event);
+        eventsByKey.set(event.customer_key, list);
       }
 
-      const next = (states as CustomerState[]).map(s => toRadarItem(s, latest.get(s.customer_key), eventsByKey.get(s.customer_key) ?? []));
-      setItems(next); setSelectedKey(next[0]?.customer.customer_key ?? ''); setLive(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to load live CommunicationIQ data.');
-      setLive(false);
+      const next = sortRadarItems(customerStates.map(state => toRadarItem(state, latest.get(state.customer_key), eventsByKey.get(state.customer_key) ?? [])));
+      setItems(next);
+      setSelectedKey(current => current && next.some(item => item.customer.customer_key === current) ? current : next[0]?.customer.customer_key ?? '');
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load CommsIQ intelligence.');
     } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  const counts = useMemo(() => Object.fromEntries(filters.map(f => [f.id, items.filter(i => i.category === f.id || (f.id === 'attention' && i.priority !== 'low')).length])), [items]);
-  const filtered = useMemo(() => filter === 'attention' ? items.filter(i => i.priority !== 'low') : items.filter(i => i.category === filter), [filter, items]);
-  const selected = items.find(i => i.customer.customer_key === selectedKey) ?? filtered[0] ?? items[0];
-  const totalOutbound = items.reduce((n,i)=>n+i.customer.outbound_count,0);
-  const autoOutbound = items.reduce((n,i)=>n+i.customer.automated_outbound_count,0);
-  const automationShare = totalOutbound ? Math.round(autoOutbound / totalOutbound * 100) : 0;
-  const waiting = items.filter(i=>i.customer.awaiting_human_response);
-  const avgWait = waiting.length ? Math.round(waiting.reduce((n,i)=>n+(i.customer.minutes_waiting ?? 0),0)/waiting.length) : null;
+  const counts = useMemo(() => Object.fromEntries(filters.map(item => [item.id, items.filter(radarItem => matchesRadarFilter(radarItem, item.id)).length])), [items]);
+  const filtered = useMemo(() => items.filter(item => matchesRadarFilter(item, filter)), [items, filter]);
+  const selected = items.find(item => item.customer.customer_key === selectedKey) ?? filtered[0] ?? items[0];
+  const highPriority = items.filter(item => item.priority === 'critical' || item.priority === 'high').length;
+  const waiting = items.filter(item => item.customer.awaiting_human_response);
+  const avgWait = waiting.length ? Math.round(waiting.reduce((sum, item) => sum + (item.customer.minutes_waiting ?? 0), 0) / waiting.length) : null;
+  const buying = items.filter(item => matchesRadarFilter(item, 'buying')).length;
+  const risk = items.filter(item => matchesRadarFilter(item, 'risk')).length;
+  const assessed = items.filter(item => item.assessment).length;
 
   return (
-    <div className="mx-auto w-full max-w-[1480px] px-3 pb-24 pt-3 sm:px-5 lg:px-7 lg:pb-8">
+    <div className="mx-auto w-full max-w-[1500px] px-3 pb-24 pt-3 sm:px-5 lg:px-7 lg:pb-8">
       <section className="rounded-2xl border border-[var(--border)] bg-white p-4 sm:p-5">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]"><span className={`h-2 w-2 rounded-full ${live ? 'bg-[var(--success)]' : 'bg-[var(--warning)]'}`} /> {live ? 'Live intelligence' : 'Preview mode'}</div>
-            <h1 className="mt-2 text-[clamp(1.45rem,3vw,2.1rem)] font-semibold tracking-[-0.04em]">What needs attention</h1>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">Prioritized customer communications, manager risk signals, and the next best action.</p>
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"><span className="h-2 w-2 rounded-full bg-[var(--success)]" /> Live manager intelligence</div>
+            <h1 className="mt-2 text-[clamp(1.55rem,3vw,2.25rem)] font-semibold tracking-[-0.045em]">What should happen next</h1>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--muted)]">CommsIQ reads the conversation, separates human follow-up from automation, and surfaces the customers where manager attention can change the outcome.</p>
           </div>
-          <button onClick={()=>void load()} disabled={loading} className="flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-medium transition hover:bg-[var(--surface-subtle)] disabled:opacity-50"><RefreshIcon size={16} className={loading ? 'animate-spin' : ''}/><span className="hidden sm:inline">Refresh</span></button>
+          <button onClick={() => void load()} disabled={loading} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-medium transition hover:bg-[var(--surface-subtle)] disabled:opacity-50"><RefreshIcon size={16} className={loading ? 'animate-spin' : ''} /> Refresh</button>
         </div>
         {error && <div className="mt-3 rounded-xl border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{error}</div>}
-
-        <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-[var(--border)] pt-4 md:grid-cols-4">
-          <Metric label="Needs attention" value={String(items.filter(i=>i.priority==='critical'||i.priority==='high').length)} detail="High priority" />
-          <Metric label="Customer waiting" value={String(waiting.length)} detail={avgWait == null ? 'No open waits' : `Avg ${mins(avgWait)}`} />
-          <Metric label="Human response" value={avgWait == null ? '—' : mins(avgWait)} detail="Open inbound queue" />
-          <Metric label="Automation share" value={`${automationShare}%`} detail={`${autoOutbound} automated outbound`} />
+        <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[var(--border)] pt-4 md:grid-cols-5">
+          <Metric label="Needs attention" value={String(highPriority)} detail="High + critical" />
+          <Metric label="Buying now" value={String(buying)} detail="Strong purchase intent" />
+          <Metric label="Waiting on us" value={String(waiting.length)} detail={avgWait == null ? 'No open waits' : `Avg ${mins(avgWait)}`} />
+          <Metric label="CX risk" value={String(risk)} detail="Risk or negative sentiment" />
+          <Metric label="AI coverage" value={`${assessed}/${items.length}`} detail="Latest customer states" />
         </div>
       </section>
 
       <div className="no-scrollbar -mx-3 mt-3 flex gap-2 overflow-x-auto px-3 sm:-mx-5 sm:px-5 lg:mx-0 lg:px-0">
-        {filters.map(f => <button key={f.id} onClick={()=>setFilter(f.id)} className={`min-h-11 shrink-0 rounded-full border px-3.5 text-sm font-medium transition ${filter===f.id ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'}`}>{f.label}<span className={`ml-2 text-xs ${filter===f.id?'text-white/65':'text-[var(--muted-2)]'}`}>{counts[f.id] ?? 0}</span></button>)}
+        {filters.map(item => <button key={item.id} onClick={() => setFilter(item.id)} className={`min-h-11 shrink-0 rounded-full border px-3.5 text-sm font-medium transition ${filter === item.id ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'}`}>{item.label}<span className={`ml-2 text-xs ${filter === item.id ? 'text-white/65' : 'text-[var(--muted-2)]'}`}>{counts[item.id] ?? 0}</span></button>)}
       </div>
 
-      <section className="mt-3 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,.8fr)]">
+      <section className="mt-3 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.16fr)_minmax(380px,.84fr)]">
         <div className="min-w-0 space-y-2.5">
-          {filtered.length === 0 && <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-white p-8 text-center"><CheckIcon className="mx-auto text-[var(--success)]"/><div className="mt-3 font-semibold">Nothing in this queue</div><p className="mt-1 text-sm text-[var(--muted)]">No current conversations match this filter.</p></div>}
-          {filtered.map(item => <RadarCard key={item.customer.customer_key} item={item} active={selected?.customer.customer_key===item.customer.customer_key} onSelect={()=>setSelectedKey(item.customer.customer_key)} />)}
+          <div className="flex items-center justify-between px-1 text-xs text-[var(--muted)]"><span>{queueLabel[filter]}</span><span>{filtered.length} conversations</span></div>
+          {!loading && filtered.length === 0 && <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-white p-9 text-center"><CheckIcon className="mx-auto text-[var(--success)]"/><div className="mt-3 font-semibold">Nothing in this queue</div><p className="mt-1 text-sm text-[var(--muted)]">No current conversations match this signal.</p></div>}
+          {filtered.map(item => <RadarCard key={item.customer.customer_key} item={item} active={selected?.customer.customer_key === item.customer.customer_key} onSelect={() => setSelectedKey(item.customer.customer_key)} />)}
         </div>
         {selected && <IntelligencePanel item={selected} />}
       </section>
@@ -143,29 +172,47 @@ export function ManagerRadar() {
   );
 }
 
-function Metric({ label, value, detail }: { label:string; value:string; detail:string }) {
+function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return <div className="min-w-0"><div className="text-xs font-medium text-[var(--muted)]">{label}</div><div className="mt-1 text-2xl font-semibold tracking-[-0.04em] tabular-nums">{value}</div><div className="mt-0.5 truncate text-[11px] text-[var(--muted-2)]">{detail}</div></div>;
 }
 
-function RadarCard({ item, active, onSelect }: { item:RadarItem; active:boolean; onSelect:()=>void }) {
-  const a=item.assessment; const c=item.customer;
+function RadarCard({ item, active, onSelect }: { item: RadarItem; active: boolean; onSelect: () => void }) {
+  const { customer, assessment } = item;
   return <button onClick={onSelect} className={`w-full rounded-2xl border border-l-[3px] border-[var(--border)] p-4 text-left transition hover:border-[var(--border-strong)] ${priorityClass(item.priority)} ${active ? 'ring-1 ring-[var(--brand)]/20' : ''}`}>
     <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">{item.priority} priority</span>{a?.primary_objection && <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-[var(--muted)]">{a.primary_objection}</span>}</div><div className="mt-1 truncate text-[15px] font-semibold tracking-[-0.015em]">{c.customer_name}</div><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--muted)]"><span>{c.salesperson ?? 'Unassigned'}</span>{c.lead_status && <span>{c.lead_status}</span>}{c.lead_source && <span>{c.lead_source}</span>}</div></div>
-      <div className="shrink-0 text-right"><div className="text-[10px] uppercase tracking-wide text-[var(--muted-2)]">Opportunity</div><div className={`mt-0.5 text-xl font-semibold tabular-nums ${scoreTone(a?.opportunity_score)}`}>{a?.opportunity_score ?? '—'}</div></div>
+      <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">{queueLabel[item.category]}</span><span className="rounded-full border border-[var(--border)] bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase text-[var(--muted)]">{item.priority}</span>{assessment?.primary_objection && <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-medium text-[var(--muted)]">{assessment.primary_objection}</span>}</div><div className="mt-1.5 truncate text-[15px] font-semibold">{customer.customer_name}</div><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--muted)]"><span>{customer.salesperson ?? 'Unassigned'}</span>{customer.lead_status && <span>{customer.lead_status}</span>}<span>{relativeTime(customer.last_activity_at)}</span></div></div>
+      <div className="shrink-0 text-right"><div className="text-[10px] uppercase tracking-wide text-[var(--muted-2)]">AIQ score</div><div className="mt-0.5 text-xl font-semibold tabular-nums">{assessment?.overall_score ?? '—'}</div></div>
     </div>
-    <p className="mt-3 line-clamp-2 text-sm leading-5.5 text-[#34383f]">{a?.summary ?? (c.awaiting_human_response ? `Customer has been waiting ${mins(c.minutes_waiting)} for a human response.` : 'Conversation is active and ready for manager review.')}</p>
-    <div className="mt-3 rounded-xl border border-[var(--border)] bg-white/75 p-3"><div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]"><SparkIcon size={13}/> What should happen next</div><p className="mt-1 text-sm font-medium leading-5.5">{a?.recommended_next_action ?? 'Review the latest customer message and establish a clear next step.'}</p></div>
-    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-[var(--muted)]"><div className="flex items-center gap-1.5"><ClockIcon size={14}/>{c.awaiting_human_response ? `Waiting ${mins(c.minutes_waiting)}` : 'No unanswered inbound'}</div><span className="flex items-center gap-1 font-medium text-[var(--text)]">Review <ArrowIcon size={14}/></span></div>
+    <p className="mt-3 line-clamp-2 text-sm leading-5.5 text-[#34383f]">{assessment?.summary ?? 'AI assessment pending for this conversation.'}</p>
+    <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-white/80 px-3 py-2.5"><div className="min-w-0"><div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">Next best action</div><div className="mt-0.5 line-clamp-1 text-xs font-medium text-[var(--text)]">{assessment?.recommended_next_action ?? 'Review conversation'}</div></div><ArrowIcon size={16} className="shrink-0 text-[var(--muted)]" /></div>
   </button>;
 }
 
-function IntelligencePanel({ item }: { item:RadarItem }) {
-  const a=item.assessment; const c=item.customer; const scores=[['Purchase intent',a?.purchase_intent_score],['Engagement',a?.engagement_score],['Communication quality',a?.communication_quality_score],['Risk',a?.risk_score]] as const;
-  return <aside className="min-w-0 rounded-2xl border border-[var(--border)] bg-white p-4 xl:sticky xl:top-[74px] sm:p-5">
-    <div className="flex items-start justify-between gap-4"><div className="min-w-0"><div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Conversation intelligence</div><h2 className="mt-1 truncate text-lg font-semibold tracking-[-0.025em]">{c.customer_name}</h2><div className="mt-1 text-xs text-[var(--muted)]">{c.salesperson ?? 'Unassigned'} · {a?.lifecycle_stage ?? c.lead_status ?? 'Active'}</div></div><div className="shrink-0 text-right"><div className="text-[10px] uppercase tracking-wide text-[var(--muted-2)]">CommunicationIQ</div><div className="mt-0.5 text-3xl font-semibold tracking-[-0.05em] tabular-nums">{a?.overall_score ?? '—'}</div></div></div>
-    <div className="mt-5 space-y-3.5">{scores.map(([label,score])=><div key={label}><div className="flex justify-between text-xs"><span className="font-medium">{label}</span><span className="tabular-nums text-[var(--muted)]">{score ?? '—'}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--surface-subtle)]"><div className="h-full rounded-full bg-[var(--brand)] transition-[width]" style={{width:`${Math.max(0,Math.min(100,score??0))}%`}}/></div></div>)}</div>
-    <div className="mt-5 border-t border-[var(--border)] pt-4"><div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">AI read</div><p className="mt-2 text-sm leading-6 text-[#34383f]">{a?.rationale ?? a?.summary ?? 'AI assessment will appear here as soon as this conversation has been scored.'}</p></div>
-    <div className="mt-5 border-t border-[var(--border)] pt-4"><div className="flex items-center justify-between"><div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">Recent activity</div><div className="text-[10px] text-[var(--muted-2)]">{item.events.length} events</div></div><div className="mt-3 space-y-4">{item.events.length ? item.events.slice(0,5).map(e=><div key={e.id} className="grid grid-cols-[10px_minmax(0,1fr)] gap-3"><div className={`mt-1.5 h-2.5 w-2.5 rounded-full ${e.actor_type==='customer'?'bg-[var(--accent)]':e.actor_type==='human'?'bg-[var(--success)]':'bg-[var(--violet)]'}`}/><div className="min-w-0"><div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-medium">{e.actor_type==='customer'?'Customer inbound':e.actor_type==='human'?'Human outbound':'Automated outbound'}</span><span className="text-[var(--muted-2)]">{e.channel}</span></div><p className="mt-1 line-clamp-3 text-xs leading-5 text-[var(--muted)]">{e.message_clean ?? e.communication_type ?? 'Activity logged'}</p></div></div>) : <p className="text-sm text-[var(--muted)]">No event detail loaded for this preview conversation.</p>}</div></div>
+function IntelligencePanel({ item }: { item: RadarItem }) {
+  const { customer, assessment, events } = item;
+  return <aside className="min-w-0 self-start rounded-2xl border border-[var(--border)] bg-white xl:sticky xl:top-3">
+    <div className="border-b border-[var(--border)] p-4 sm:p-5"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-[var(--brand-soft)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--brand)]">{queueLabel[item.category]}</span><span className="text-xs text-[var(--muted)]">{item.priority} priority</span></div><h2 className="mt-3 text-xl font-semibold tracking-[-0.03em]">{customer.customer_name}</h2><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--muted)]"><span>{customer.salesperson ?? 'Unassigned'}</span>{customer.lead_source && <span>{customer.lead_source}</span>}{customer.lead_status && <span>{customer.lead_status}</span>}</div></div>
+    <div className="p-4 sm:p-5">
+      <div className="rounded-2xl bg-[var(--surface-subtle)] p-4"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]"><SparkIcon size={15} /> CommsIQ read</div><p className="mt-2 text-sm leading-6 text-[var(--text)]">{assessment?.summary ?? 'Assessment pending.'}</p>{assessment?.rationale && <p className="mt-2 border-t border-[var(--border)] pt-2 text-xs leading-5 text-[var(--muted)]">Why: {assessment.rationale}</p>}</div>
+      <div className="mt-4 grid grid-cols-3 gap-2"><Score label="Intent" value={assessment?.purchase_intent_score} /><Score label="Opportunity" value={assessment?.opportunity_score} /><Score label="Risk" value={assessment?.risk_score} inverse /><Score label="Engagement" value={assessment?.engagement_score} /><Score label="Human quality" value={assessment?.communication_quality_score} /><Score label="Sentiment" value={assessment?.sentiment_score} sentiment /></div>
+      <div className="mt-4 rounded-2xl border border-[var(--brand)]/15 bg-[var(--brand-soft)]/55 p-4"><div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--brand)]">What should happen next</div><div className="mt-1 text-sm font-semibold leading-5.5">{assessment?.recommended_next_action ?? 'Review this conversation and determine the next customer-facing action.'}</div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-[var(--muted)]"><span>Owner: <strong className="font-medium text-[var(--text)]">{assessment?.recommended_owner ?? customer.salesperson ?? 'Sales Manager'}</strong></span><span className="flex items-center gap-1"><ClockIcon size={13} /> {dueLabel(assessment?.recommended_due_at)}</span></div></div>
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs"><Fact label="Primary intent" value={assessment?.primary_intent ?? 'Not detected'} /><Fact label="Primary objection" value={assessment?.primary_objection ?? 'None detected'} /><Fact label="Lifecycle" value={(assessment?.lifecycle_stage ?? 'Unknown').replaceAll('_', ' ')} /><Fact label="Waiting" value={customer.awaiting_human_response ? mins(customer.minutes_waiting) : 'No'} /></div>
+      <div className="mt-5"><div className="flex items-center justify-between"><h3 className="text-sm font-semibold">Conversation timeline</h3><span className="text-[11px] text-[var(--muted)]">Latest {events.length}</span></div><div className="mt-2 space-y-2">{events.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted)]">No timeline events loaded.</div>}{events.map(event => <TimelineEvent key={event.id} event={event} />)}</div></div>
+    </div>
   </aside>;
+}
+
+function Score({ label, value, inverse = false, sentiment = false }: { label: string; value: number | null | undefined; inverse?: boolean; sentiment?: boolean }) {
+  const tone = sentiment ? (value != null && value < -20 ? 'text-[var(--danger)]' : value != null && value > 30 ? 'text-[var(--success)]' : 'text-[var(--warning)]') : scoreTone(value, inverse);
+  return <div className="rounded-xl border border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--muted)]">{label}</div><div className={`mt-0.5 text-lg font-semibold tabular-nums ${tone}`}>{value ?? '—'}</div></div>;
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-xl border border-[var(--border)] p-3"><div className="text-[10px] uppercase tracking-wide text-[var(--muted-2)]">{label}</div><div className="mt-1 line-clamp-2 font-medium capitalize text-[var(--text)]">{value}</div></div>;
+}
+
+function TimelineEvent({ event }: { event: CommunicationEvent }) {
+  const automated = event.actor_type === 'automation';
+  const inbound = event.direction === 'Inbound';
+  return <div className="rounded-xl border border-[var(--border)] p-3"><div className="flex items-center justify-between gap-3 text-[10px] text-[var(--muted)]"><span className="font-semibold uppercase tracking-wide">{inbound ? 'Customer' : automated ? 'Ava automation' : 'Human outbound'}</span><span>{relativeTime(event.activity_at)}</span></div><p className="mt-1.5 line-clamp-4 text-xs leading-5 text-[var(--text)]">{event.message_clean || `${event.channel} communication`}</p></div>;
 }
