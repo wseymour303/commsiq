@@ -3,57 +3,67 @@ const PROCESSED_KEY = 'COMMSIQ_PROCESSED_MESSAGE_IDS';
 const MAX_PROCESSED_IDS = 250;
 
 function ingestMotoSnapReports() {
-  const props = PropertiesService.getScriptProperties();
-  const endpoint = String(props.getProperty('COMMSIQ_INGEST_URL') || '').trim();
-  const secret = String(props.getProperty('COMMSIQ_INGEST_SECRET') || '').trim();
-
-  if (!endpoint || !secret) {
-    throw new Error('Set COMMSIQ_INGEST_URL and COMMSIQ_INGEST_SECRET in Script Properties.');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) {
+    console.log('Another CommsIQ Gmail ingestion run is already active.');
+    return;
   }
 
-  const processed = new Set(readProcessedIds_(props));
-  const threads = GmailApp.search(COMMSIQ_QUERY, 0, 50);
-  let changed = false;
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const endpoint = String(props.getProperty('COMMSIQ_INGEST_URL') || '').trim();
+    const secret = String(props.getProperty('COMMSIQ_INGEST_SECRET') || '').trim();
 
-  for (const thread of threads) {
-    for (const message of thread.getMessages()) {
-      const messageId = message.getId();
-      if (processed.has(messageId)) continue;
-      if (!isMotoSnapReport_(message)) continue;
+    if (!endpoint || !secret) {
+      throw new Error('Set COMMSIQ_INGEST_URL and COMMSIQ_INGEST_SECRET in Script Properties.');
+    }
 
-      const attachments = message.getAttachments({ includeInlineImages: false, includeAttachments: true })
-        .filter(blob => /\.xlsx$/i.test(blob.getName()));
+    const processed = new Set(readProcessedIds_(props));
+    const threads = GmailApp.search(COMMSIQ_QUERY, 0, 50);
+    let changed = false;
 
-      if (!attachments.length) continue;
+    for (const thread of threads) {
+      for (const message of thread.getMessages()) {
+        const messageId = message.getId();
+        if (processed.has(messageId)) continue;
+        if (!isMotoSnapReport_(message)) continue;
 
-      let messageSucceeded = true;
-      for (const attachment of attachments) {
-        const response = UrlFetchApp.fetch(endpoint, {
-          method: 'post',
-          headers: {
-            'x-commsiq-ingest-secret': secret,
-            'x-gmail-message-id': messageId
-          },
-          payload: { file: attachment },
-          muteHttpExceptions: true
-        });
+        const attachments = message.getAttachments({ includeInlineImages: false, includeAttachments: true })
+          .filter(blob => /\.xlsx$/i.test(blob.getName()));
 
-        const code = response.getResponseCode();
-        if (code < 200 || code >= 300) {
-          console.error(`CommsIQ ingest failed for ${messageId}: HTTP ${code} ${response.getContentText()}`);
-          messageSucceeded = false;
-          break;
+        if (!attachments.length) continue;
+
+        let messageSucceeded = true;
+        for (const attachment of attachments) {
+          const response = UrlFetchApp.fetch(endpoint, {
+            method: 'post',
+            headers: {
+              'x-commsiq-ingest-secret': secret,
+              'x-gmail-message-id': messageId
+            },
+            payload: { file: attachment },
+            muteHttpExceptions: true
+          });
+
+          const code = response.getResponseCode();
+          if (code < 200 || code >= 300) {
+            console.error(`CommsIQ ingest failed for ${messageId}: HTTP ${code} ${response.getContentText()}`);
+            messageSucceeded = false;
+            break;
+          }
+        }
+
+        if (messageSucceeded) {
+          processed.add(messageId);
+          changed = true;
         }
       }
-
-      if (messageSucceeded) {
-        processed.add(messageId);
-        changed = true;
-      }
     }
-  }
 
-  if (changed) writeProcessedIds_(props, [...processed]);
+    if (changed) writeProcessedIds_(props, [...processed]);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function setupCommsIqTrigger() {
