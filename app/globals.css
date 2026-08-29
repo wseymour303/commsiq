@@ -39,3 +39,23 @@ button { -webkit-tap-highlight-color: transparent; }
 .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+.auth-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+  color: #101828;
+  font-size: 16px;
+  line-height: 1.25;
+  box-shadow: none;
+  outline: none;
+}
+.auth-input::placeholder { color: #98a2b3; opacity: 1; }
+.auth-input:focus {
+  border-color: #7f9db9;
+  box-shadow: 0 0 0 3px rgba(23,59,103,.08);
+}
