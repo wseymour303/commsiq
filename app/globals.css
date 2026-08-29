@@ -1,25 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7f8fa;
+  --background: #f5f6f8;
   --surface: #ffffff;
-  --surface-subtle: #f2f4f7;
-  --border: #e5e7eb;
-  --border-strong: #d6dae1;
-  --text: #15171a;
+  --surface-subtle: #f1f3f5;
+  --border: #e2e5e9;
+  --border-strong: #cfd4da;
+  --text: #111317;
   --muted: #667085;
-  --muted-2: #8a94a3;
-  --brand: #111315;
-  --accent: #2563eb;
-  --accent-soft: #eff6ff;
-  --success: #16825d;
-  --success-soft: #ecfdf5;
-  --warning: #a15c00;
-  --warning-soft: #fff7e6;
-  --danger: #b42318;
-  --danger-soft: #fff1f0;
-  --violet: #6941c6;
-  --violet-soft: #f4f3ff;
+  --muted-2: #98a2b3;
+  --brand: #0b0d0f;
+  --accent: #2f5f8f;
+  --accent-soft: #eef4f9;
+  --success: #16735b;
+  --success-soft: #edf8f4;
+  --warning: #8a5a18;
+  --warning-soft: #f8f4ec;
+  --danger: #a63b32;
+  --danger-soft: #fbf1ef;
+  --violet: #66558c;
+  --violet-soft: #f4f1f8;
 }
 
 * { box-sizing: border-box; }
@@ -34,7 +34,7 @@ body {
 }
 button, input, select { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
-::selection { background: #dbeafe; }
+::selection { background: #dfeaf4; }
 
 .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 .no-scrollbar { scrollbar-width: none; }
