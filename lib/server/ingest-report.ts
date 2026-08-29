@@ -6,6 +6,17 @@ import { parseCommunicationWorkbook, type NormalizedCommunicationEvent } from '.
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+type StateEventRow = {
+  customer_key: string;
+  customer_name: string;
+  salesperson: string | null;
+  activity_at: string;
+  direction: string;
+  lead_status: string | null;
+  lead_source: string | null;
+  is_automated: boolean;
+};
+
 function adminClient() {
   if (!url || !serviceRoleKey) throw new Error('Supabase server configuration is incomplete.');
   return createClient(url, serviceRoleKey, {
@@ -17,7 +28,7 @@ function unique<T>(values: T[]) {
   return [...new Set(values)];
 }
 
-function latestNonNull<T extends object, K extends keyof T>(rows: T[], key: K): T[K] | null {
+function latestNonNull<K extends keyof StateEventRow>(rows: StateEventRow[], key: K): StateEventRow[K] | null {
   for (const row of rows) {
     const value = row[key];
     if (value != null && value !== '') return value;
@@ -39,8 +50,8 @@ async function refreshCustomerStates(
     .order('activity_at', { ascending: false });
   if (error) throw error;
 
-  const grouped = new Map<string, typeof data>();
-  for (const row of data ?? []) {
+  const grouped = new Map<string, StateEventRow[]>();
+  for (const row of (data ?? []) as StateEventRow[]) {
     const list = grouped.get(row.customer_key) ?? [];
     list.push(row);
     grouped.set(row.customer_key, list);
