@@ -1,5 +1,16 @@
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
-export type RadarFilter = 'attention' | 'buying' | 'waiting' | 'risk' | 'future' | 'advocate' | 'all';
+export type RadarFilter =
+  | 'attention'
+  | 'buying'
+  | 'waiting'
+  | 'price'
+  | 'appointment'
+  | 'future'
+  | 'overcontact'
+  | 'advocate'
+  | 'risk'
+  | 'dnc'
+  | 'all';
 
 export interface CustomerState {
   id: string;
@@ -43,6 +54,7 @@ export interface Assessment {
   recommended_next_action: string | null;
   recommended_owner: string | null;
   recommended_due_at: string | null;
+  evidence?: Array<{ event_id?: string; activity_at?: string; reason?: string }> | null;
 }
 
 export interface CommunicationEvent {
