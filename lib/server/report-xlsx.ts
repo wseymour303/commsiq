@@ -117,21 +117,27 @@ function parseReportDate(value: unknown) {
   return raw ? denverLocalToIso(raw) : null;
 }
 
+function findHeaderRow(sheet: ExcelJS.Worksheet) {
+  const scanLimit = Math.min(sheet.rowCount, 10);
+  for (let rowNumber = 1; rowNumber <= scanLimit; rowNumber += 1) {
+    const row = sheet.getRow(rowNumber);
+    const headers = EXPECTED_HEADERS.map((_, index) => text(row.getCell(index + 1).value));
+    if (headers.every((header, index) => header === EXPECTED_HEADERS[index])) return rowNumber;
+  }
+  throw new Error('Could not find the expected MotoSnap communication report headers.');
+}
+
 export async function parseCommunicationWorkbook(buffer: Buffer): Promise<NormalizedCommunicationEvent[]> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
   const sheet = workbook.worksheets.find(ws => ws.name.toLowerCase() === 'report') ?? workbook.worksheets[0];
   if (!sheet) throw new Error('Workbook has no worksheets.');
 
-  const headers = EXPECTED_HEADERS.map((_, index) => text(sheet.getRow(1).getCell(index + 1).value));
-  if (headers.some((header, index) => header !== EXPECTED_HEADERS[index])) {
-    throw new Error(`Unexpected report columns. Received: ${headers.join(', ')}`);
-  }
-
+  const headerRow = findHeaderRow(sheet);
   const events: NormalizedCommunicationEvent[] = [];
   const seen = new Set<string>();
 
-  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+  for (let rowNumber = headerRow + 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
     const row = sheet.getRow(rowNumber);
     const customerName = text(row.getCell(4).value);
     const activityRaw = row.getCell(5).value;
@@ -190,5 +196,6 @@ export async function parseCommunicationWorkbook(buffer: Buffer): Promise<Normal
     });
   }
 
+  if (!events.length) throw new Error('The report contained no communication events.');
   return events;
 }
