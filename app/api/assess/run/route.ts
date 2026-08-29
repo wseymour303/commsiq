@@ -12,6 +12,12 @@ function safeSecretMatch(received: string, expected: string) {
   return timingSafeEqual(left, right);
 }
 
+function metadataCustomerKeys(metadata: unknown) {
+  if (!metadata || typeof metadata !== 'object') return [];
+  const value = (metadata as { customer_keys?: unknown }).customer_keys;
+  return Array.isArray(value) ? [...new Set(value.map(String).filter(Boolean))] : [];
+}
+
 export async function POST(request: Request) {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -46,7 +52,7 @@ export async function POST(request: Request) {
 
   const { data: batch, error: batchError } = await admin
     .from('communication_ingest_batches')
-    .select('id,status,created_at')
+    .select('id,status,created_at,metadata')
     .eq('id', batchId)
     .eq('rooftop_id', rooftopId)
     .maybeSingle();
@@ -59,18 +65,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Completed ingestion batch not found.' }, { status: 404 });
   }
 
-  const { data: batchEvents, error: eventError } = await admin
-    .from('communication_events')
-    .select('customer_key')
-    .eq('rooftop_id', rooftopId)
-    .eq('ingest_batch_id', batchId);
-  if (eventError) {
-    return NextResponse.json({ error: 'Unable to resolve batch customers.' }, { status: 500 });
+  let customerKeys = metadataCustomerKeys(batch.metadata);
+  if (!customerKeys.length) {
+    const { data: batchEvents, error: eventError } = await admin
+      .from('communication_events')
+      .select('customer_key')
+      .eq('rooftop_id', rooftopId)
+      .eq('ingest_batch_id', batchId);
+    if (eventError) {
+      return NextResponse.json({ error: 'Unable to resolve batch customers.' }, { status: 500 });
+    }
+    customerKeys = [...new Set((batchEvents ?? []).map(row => String(row.customer_key)).filter(Boolean))];
   }
 
-  const customerKeys = [...new Set((batchEvents ?? []).map(row => String(row.customer_key)).filter(Boolean))];
   if (!customerKeys.length) {
-    return NextResponse.json({ alreadyAssessed: true, batchId, customers: 0, assessments: 0 });
+    return NextResponse.json({
+      alreadyAssessed: false,
+      superseded: true,
+      batchId,
+      customers: 0,
+      assessments: 0
+    });
   }
 
   const { data: existing, error: existingError } = await admin
@@ -87,6 +102,7 @@ export async function POST(request: Request) {
   if (customerKeys.every(customerKey => assessedKeys.has(customerKey))) {
     return NextResponse.json({
       alreadyAssessed: true,
+      superseded: false,
       batchId,
       customers: customerKeys.length,
       assessments: customerKeys.length
@@ -95,7 +111,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await assessCommunicationBatch({ rooftopId, batchId });
-    return NextResponse.json({ alreadyAssessed: false, ...result });
+    return NextResponse.json({ alreadyAssessed: false, superseded: false, ...result });
   } catch (error) {
     console.error('CommunicationIQ AI assessment failed', error);
     return NextResponse.json(
