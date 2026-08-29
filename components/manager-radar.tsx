@@ -86,6 +86,7 @@ export function ManagerRadar() {
   const [items, setItems] = useState<RadarItem[]>([]);
   const [filter, setFilter] = useState<RadarFilter>('attention');
   const [selectedKey, setSelectedKey] = useState('');
+  const [detailOpen, setDetailOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -127,7 +128,8 @@ export function ManagerRadar() {
 
   const counts = useMemo(() => Object.fromEntries(filters.map(item => [item.id, items.filter(radarItem => matchesRadarFilter(radarItem, item.id)).length])), [items]);
   const filtered = useMemo(() => items.filter(item => matchesRadarFilter(item, filter)), [items, filter]);
-  const selected = items.find(item => item.customer.customer_key === selectedKey) ?? filtered[0] ?? items[0];
+  const selectedIndex = Math.max(0, filtered.findIndex(item => item.customer.customer_key === selectedKey));
+  const selected = filtered[selectedIndex] ?? items.find(item => item.customer.customer_key === selectedKey) ?? filtered[0] ?? items[0];
   const highPriority = items.filter(item => item.priority === 'critical' || item.priority === 'high').length;
   const waiting = items.filter(item => item.customer.awaiting_human_response);
   const avgWait = waiting.length ? Math.round(waiting.reduce((sum, item) => sum + (item.customer.minutes_waiting ?? 0), 0) / waiting.length) : null;
@@ -135,40 +137,72 @@ export function ManagerRadar() {
   const risk = items.filter(item => matchesRadarFilter(item, 'risk')).length;
   const assessed = items.filter(item => item.assessment).length;
 
-  return (
-    <div className="mx-auto w-full max-w-[1500px] px-3 pb-24 pt-3 sm:px-5 lg:px-7 lg:pb-8">
-      <section className="rounded-2xl border border-[var(--border)] bg-white p-4 sm:p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"><span className="h-2 w-2 rounded-full bg-[var(--success)]" /> Live manager intelligence</div>
-            <h1 className="mt-2 text-[clamp(1.55rem,3vw,2.25rem)] font-semibold tracking-[-0.045em]">What should happen next</h1>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--muted)]">CommsIQ reads the conversation, separates human follow-up from automation, and surfaces the customers where manager attention can change the outcome.</p>
-          </div>
-          <button onClick={() => void load()} disabled={loading} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-medium transition hover:bg-[var(--surface-subtle)] disabled:opacity-50"><RefreshIcon size={16} className={loading ? 'animate-spin' : ''} /> Refresh</button>
-        </div>
-        {error && <div className="mt-3 rounded-xl border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{error}</div>}
-        <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[var(--border)] pt-4 md:grid-cols-5">
-          <Metric label="Needs attention" value={String(highPriority)} detail="High + critical" />
-          <Metric label="Buying now" value={String(buying)} detail="Strong purchase intent" />
-          <Metric label="Waiting on us" value={String(waiting.length)} detail={avgWait == null ? 'No open waits' : `Avg ${mins(avgWait)}`} />
-          <Metric label="CX risk" value={String(risk)} detail="Risk or negative sentiment" />
-          <Metric label="AI coverage" value={`${assessed}/${items.length}`} detail="Latest customer states" />
-        </div>
-      </section>
+  const openDetail = useCallback((customerKey: string) => {
+    setSelectedKey(customerKey);
+    setDetailOpen(true);
+  }, []);
 
-      <div className="no-scrollbar -mx-3 mt-3 flex gap-2 overflow-x-auto px-3 sm:-mx-5 sm:px-5 lg:mx-0 lg:px-0">
-        {filters.map(item => <button key={item.id} onClick={() => setFilter(item.id)} className={`min-h-11 shrink-0 rounded-full border px-3.5 text-sm font-medium transition ${filter === item.id ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'}`}>{item.label}<span className={`ml-2 text-xs ${filter === item.id ? 'text-white/65' : 'text-[var(--muted-2)]'}`}>{counts[item.id] ?? 0}</span></button>)}
+  const closeDetail = useCallback(() => setDetailOpen(false), []);
+
+  const moveDetail = useCallback((direction: -1 | 1) => {
+    if (!filtered.length) return;
+    const currentIndex = filtered.findIndex(item => item.customer.customer_key === selectedKey);
+    const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = Math.min(filtered.length - 1, Math.max(0, baseIndex + direction));
+    setSelectedKey(filtered[nextIndex].customer.customer_key);
+  }, [filtered, selectedKey]);
+
+  useEffect(() => {
+    if (!detailOpen) return;
+    const priorOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDetail();
+      if (event.key === 'ArrowLeft') moveDetail(-1);
+      if (event.key === 'ArrowRight') moveDetail(1);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = priorOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [closeDetail, detailOpen, moveDetail]);
+
+  return (
+    <>
+      <div className="mx-auto w-full max-w-[1500px] px-3 pb-24 pt-3 sm:px-5 lg:px-7 lg:pb-8">
+        <section className="rounded-2xl border border-[var(--border)] bg-white p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"><span className="h-2 w-2 rounded-full bg-[var(--success)]" /> Live manager intelligence</div>
+              <h1 className="mt-2 text-[clamp(1.55rem,3vw,2.25rem)] font-semibold tracking-[-0.045em]">What should happen next</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--muted)]">CommsIQ reads the conversation, separates human follow-up from automation, and surfaces the customers where manager attention can change the outcome.</p>
+            </div>
+            <button onClick={() => void load()} disabled={loading} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-medium transition hover:bg-[var(--surface-subtle)] disabled:opacity-50"><RefreshIcon size={16} className={loading ? 'animate-spin' : ''} /> Refresh</button>
+          </div>
+          {error && <div className="mt-3 rounded-xl border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">{error}</div>}
+          <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[var(--border)] pt-4 md:grid-cols-5">
+            <Metric label="Needs attention" value={String(highPriority)} detail="High + critical" />
+            <Metric label="Buying now" value={String(buying)} detail="Strong purchase intent" />
+            <Metric label="Waiting on us" value={String(waiting.length)} detail={avgWait == null ? 'No open waits' : `Avg ${mins(avgWait)}`} />
+            <Metric label="CX risk" value={String(risk)} detail="Risk or negative sentiment" />
+            <Metric label="AI coverage" value={`${assessed}/${items.length}`} detail="Latest customer states" />
+          </div>
+        </section>
+
+        <div className="no-scrollbar -mx-3 mt-3 flex gap-2 overflow-x-auto px-3 sm:-mx-5 sm:px-5 lg:mx-0 lg:px-0">
+          {filters.map(item => <button key={item.id} onClick={() => setFilter(item.id)} className={`min-h-11 shrink-0 rounded-full border px-3.5 text-sm font-medium transition ${filter === item.id ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'}`}>{item.label}<span className={`ml-2 text-xs ${filter === item.id ? 'text-white/65' : 'text-[var(--muted-2)]'}`}>{counts[item.id] ?? 0}</span></button>)}
+        </div>
+
+        <section className="mt-3 min-w-0">
+          <div className="mb-2 flex items-center justify-between px-1 text-xs text-[var(--muted)]"><span>{queueLabel[filter]}</span><span>{filtered.length} conversations</span></div>
+          {!loading && filtered.length === 0 && <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-white p-9 text-center"><CheckIcon className="mx-auto text-[var(--success)]"/><div className="mt-3 font-semibold">Nothing in this queue</div><p className="mt-1 text-sm text-[var(--muted)]">No current conversations match this signal.</p></div>}
+          <div className="space-y-2.5">{filtered.map(item => <RadarCard key={item.customer.customer_key} item={item} onSelect={() => openDetail(item.customer.customer_key)} />)}</div>
+        </section>
       </div>
 
-      <section className="mt-3 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.16fr)_minmax(380px,.84fr)]">
-        <div className="min-w-0 space-y-2.5">
-          <div className="flex items-center justify-between px-1 text-xs text-[var(--muted)]"><span>{queueLabel[filter]}</span><span>{filtered.length} conversations</span></div>
-          {!loading && filtered.length === 0 && <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-white p-9 text-center"><CheckIcon className="mx-auto text-[var(--success)]"/><div className="mt-3 font-semibold">Nothing in this queue</div><p className="mt-1 text-sm text-[var(--muted)]">No current conversations match this signal.</p></div>}
-          {filtered.map(item => <RadarCard key={item.customer.customer_key} item={item} active={selected?.customer.customer_key === item.customer.customer_key} onSelect={() => setSelectedKey(item.customer.customer_key)} />)}
-        </div>
-        {selected && <IntelligencePanel item={selected} />}
-      </section>
-    </div>
+      {detailOpen && selected && <ConversationDetailOverlay item={selected} queueCount={filtered.length} queuePosition={selectedIndex + 1} canPrevious={selectedIndex > 0} canNext={selectedIndex < filtered.length - 1} onBack={closeDetail} onPrevious={() => moveDetail(-1)} onNext={() => moveDetail(1)} />}
+    </>
   );
 }
 
@@ -176,9 +210,9 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   return <div className="min-w-0"><div className="text-xs font-medium text-[var(--muted)]">{label}</div><div className="mt-1 text-2xl font-semibold tracking-[-0.04em] tabular-nums">{value}</div><div className="mt-0.5 truncate text-[11px] text-[var(--muted-2)]">{detail}</div></div>;
 }
 
-function RadarCard({ item, active, onSelect }: { item: RadarItem; active: boolean; onSelect: () => void }) {
+function RadarCard({ item, onSelect }: { item: RadarItem; onSelect: () => void }) {
   const { customer, assessment } = item;
-  return <button onClick={onSelect} className={`w-full rounded-2xl border border-l-[3px] border-[var(--border)] p-4 text-left transition hover:border-[var(--border-strong)] ${priorityClass(item.priority)} ${active ? 'ring-1 ring-[var(--brand)]/20' : ''}`}>
+  return <button onClick={onSelect} className={`w-full rounded-2xl border border-l-[3px] border-[var(--border)] p-4 text-left transition hover:border-[var(--border-strong)] hover:shadow-sm ${priorityClass(item.priority)}`}>
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">{queueLabel[item.category]}</span><span className="rounded-full border border-[var(--border)] bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase text-[var(--muted)]">{item.priority}</span>{assessment?.primary_objection && <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-medium text-[var(--muted)]">{assessment.primary_objection}</span>}</div><div className="mt-1.5 truncate text-[15px] font-semibold">{customer.customer_name}</div><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--muted)]"><span>{customer.salesperson ?? 'Unassigned'}</span>{customer.lead_status && <span>{customer.lead_status}</span>}<span>{relativeTime(customer.last_activity_at)}</span></div></div>
       <div className="shrink-0 text-right"><div className="text-[10px] uppercase tracking-wide text-[var(--muted-2)]">AIQ score</div><div className="mt-0.5 text-xl font-semibold tabular-nums">{assessment?.overall_score ?? '—'}</div></div>
@@ -188,31 +222,53 @@ function RadarCard({ item, active, onSelect }: { item: RadarItem; active: boolea
   </button>;
 }
 
-function IntelligencePanel({ item }: { item: RadarItem }) {
+function ConversationDetailOverlay({ item, queueCount, queuePosition, canPrevious, canNext, onBack, onPrevious, onNext }: { item: RadarItem; queueCount: number; queuePosition: number; canPrevious: boolean; canNext: boolean; onBack: () => void; onPrevious: () => void; onNext: () => void }) {
   const { customer, assessment, events } = item;
-  return <aside className="min-w-0 self-start rounded-2xl border border-[var(--border)] bg-white xl:sticky xl:top-3">
-    <div className="border-b border-[var(--border)] p-4 sm:p-5"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-[var(--brand-soft)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--brand)]">{queueLabel[item.category]}</span><span className="text-xs text-[var(--muted)]">{item.priority} priority</span></div><h2 className="mt-3 text-xl font-semibold tracking-[-0.03em]">{customer.customer_name}</h2><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--muted)]"><span>{customer.salesperson ?? 'Unassigned'}</span>{customer.lead_source && <span>{customer.lead_source}</span>}{customer.lead_status && <span>{customer.lead_status}</span>}</div></div>
-    <div className="p-4 sm:p-5">
-      <div className="rounded-2xl bg-[var(--surface-subtle)] p-4"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]"><SparkIcon size={15} /> CommsIQ read</div><p className="mt-2 text-sm leading-6 text-[var(--text)]">{assessment?.summary ?? 'Assessment pending.'}</p>{assessment?.rationale && <p className="mt-2 border-t border-[var(--border)] pt-2 text-xs leading-5 text-[var(--muted)]">Why: {assessment.rationale}</p>}</div>
-      <div className="mt-4 grid grid-cols-3 gap-2"><Score label="Intent" value={assessment?.purchase_intent_score} /><Score label="Opportunity" value={assessment?.opportunity_score} /><Score label="Risk" value={assessment?.risk_score} inverse /><Score label="Engagement" value={assessment?.engagement_score} /><Score label="Human quality" value={assessment?.communication_quality_score} /><Score label="Sentiment" value={assessment?.sentiment_score} sentiment /></div>
-      <div className="mt-4 rounded-2xl border border-[var(--brand)]/15 bg-[var(--brand-soft)]/55 p-4"><div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--brand)]">What should happen next</div><div className="mt-1 text-sm font-semibold leading-5.5">{assessment?.recommended_next_action ?? 'Review this conversation and determine the next customer-facing action.'}</div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-[var(--muted)]"><span>Owner: <strong className="font-medium text-[var(--text)]">{assessment?.recommended_owner ?? customer.salesperson ?? 'Sales Manager'}</strong></span><span className="flex items-center gap-1"><ClockIcon size={13} /> {dueLabel(assessment?.recommended_due_at)}</span></div></div>
-      <div className="mt-4 grid grid-cols-2 gap-2 text-xs"><Fact label="Primary intent" value={assessment?.primary_intent ?? 'Not detected'} /><Fact label="Primary objection" value={assessment?.primary_objection ?? 'None detected'} /><Fact label="Lifecycle" value={(assessment?.lifecycle_stage ?? 'Unknown').replaceAll('_', ' ')} /><Fact label="Waiting" value={customer.awaiting_human_response ? mins(customer.minutes_waiting) : 'No'} /></div>
-      <div className="mt-5"><div className="flex items-center justify-between"><h3 className="text-sm font-semibold">Conversation timeline</h3><span className="text-[11px] text-[var(--muted)]">Latest {events.length}</span></div><div className="mt-2 space-y-2">{events.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted)]">No timeline events loaded.</div>}{events.map(event => <TimelineEvent key={event.id} event={event} />)}</div></div>
+  return <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#f6f7f9] text-[var(--text)] lg:inset-3 lg:rounded-2xl lg:border lg:border-[var(--border)] lg:shadow-[0_24px_70px_rgba(15,23,42,0.20)]" role="dialog" aria-modal="true" aria-label={`${customer.customer_name} conversation details`}>
+    <header className="z-10 shrink-0 border-b border-[var(--border)] bg-white/95 px-3 py-3 backdrop-blur sm:px-5">
+      <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3">
+        <button onClick={onBack} className="flex min-h-10 shrink-0 items-center gap-2 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-semibold hover:bg-[var(--surface-subtle)]"><ArrowIcon size={15} className="rotate-180" /> <span className="hidden sm:inline">Back to Radar</span><span className="sm:hidden">Back</span></button>
+        <div className="min-w-0 flex-1 text-center sm:text-left"><div className="truncate text-sm font-semibold sm:text-base">{customer.customer_name}</div><div className="hidden truncate text-xs text-[var(--muted)] sm:block">{customer.salesperson ?? 'Unassigned'} · {queueLabel[item.category]} · {item.priority} priority · AIQ {assessment?.overall_score ?? '—'}</div></div>
+        <div className="flex shrink-0 items-center gap-2"><span className="hidden text-xs tabular-nums text-[var(--muted)] md:inline">{queuePosition} of {queueCount}</span><button onClick={onPrevious} disabled={!canPrevious} aria-label="Previous conversation" className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-white disabled:opacity-30"><ArrowIcon size={16} className="rotate-180" /></button><button onClick={onNext} disabled={!canNext} aria-label="Next conversation" className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-white disabled:opacity-30"><ArrowIcon size={16} /></button></div>
+      </div>
+    </header>
+
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <main className="mx-auto w-full max-w-[1440px] px-3 py-4 sm:px-5 sm:py-5 lg:px-7">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-[var(--border)] bg-white p-4 sm:p-5">
+          <div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-[var(--brand-soft)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--brand)]">{queueLabel[item.category]}</span><span className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[10px] font-semibold uppercase text-[var(--muted)]">{item.priority}</span></div><h1 className="mt-3 text-2xl font-semibold tracking-[-0.035em] sm:text-3xl">{customer.customer_name}</h1><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--muted)]"><span>{customer.salesperson ?? 'Unassigned'}</span>{customer.lead_source && <span>{customer.lead_source}</span>}{customer.lead_status && <span>{customer.lead_status}</span>}<span>Last activity {relativeTime(customer.last_activity_at)}</span></div></div>
+          <div className="text-right"><div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">AIQ score</div><div className="text-3xl font-semibold tabular-nums">{assessment?.overall_score ?? '—'}</div></div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,.95fr)_minmax(0,1.05fr)]">
+          <section className="space-y-4">
+            <div className="rounded-2xl bg-white p-4 ring-1 ring-[var(--border)] sm:p-5"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]"><SparkIcon size={15} /> CommsIQ read</div><p className="mt-2 text-sm leading-6 text-[var(--text)]">{assessment?.summary ?? 'Assessment pending.'}</p>{assessment?.rationale && <p className="mt-3 border-t border-[var(--border)] pt-3 text-xs leading-5 text-[var(--muted)]">Why: {assessment.rationale}</p>}</div>
+
+            <div className="rounded-2xl border border-[var(--brand)]/15 bg-[var(--brand-soft)]/55 p-4 sm:p-5"><div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--brand)]">What should happen next</div><div className="mt-2 text-base font-semibold leading-6">{assessment?.recommended_next_action ?? 'Review this conversation and determine the next customer-facing action.'}</div><div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[var(--muted)]"><span>Owner: <strong className="font-medium text-[var(--text)]">{assessment?.recommended_owner ?? customer.salesperson ?? 'Sales Manager'}</strong></span><span className="flex items-center gap-1"><ClockIcon size={13} /> {dueLabel(assessment?.recommended_due_at)}</span></div></div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3"><Score label="Intent" value={assessment?.purchase_intent_score} /><Score label="Opportunity" value={assessment?.opportunity_score} /><Score label="Risk" value={assessment?.risk_score} inverse /><Score label="Engagement" value={assessment?.engagement_score} /><Score label="Human quality" value={assessment?.communication_quality_score} /><Score label="Sentiment" value={assessment?.sentiment_score} sentiment /></div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs"><Fact label="Primary intent" value={assessment?.primary_intent ?? 'Not detected'} /><Fact label="Primary objection" value={assessment?.primary_objection ?? 'None detected'} /><Fact label="Lifecycle" value={(assessment?.lifecycle_stage ?? 'Unknown').replaceAll('_', ' ')} /><Fact label="Waiting" value={customer.awaiting_human_response ? mins(customer.minutes_waiting) : 'No'} /></div>
+          </section>
+
+          <section className="min-w-0 rounded-2xl border border-[var(--border)] bg-white p-4 sm:p-5"><div className="flex items-center justify-between gap-3"><div><h2 className="text-base font-semibold">Conversation timeline</h2><p className="mt-0.5 text-xs text-[var(--muted)]">Customer, human salesperson, and Ava activity shown separately.</p></div><span className="shrink-0 text-[11px] text-[var(--muted)]">Latest {events.length}</span></div><div className="mt-4 space-y-2.5">{events.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] p-4 text-xs text-[var(--muted)]">No timeline events loaded.</div>}{events.map(event => <TimelineEvent key={event.id} event={event} />)}</div></section>
+        </div>
+      </main>
     </div>
-  </aside>;
+  </div>;
 }
 
 function Score({ label, value, inverse = false, sentiment = false }: { label: string; value: number | null | undefined; inverse?: boolean; sentiment?: boolean }) {
   const tone = sentiment ? (value != null && value < -20 ? 'text-[var(--danger)]' : value != null && value > 30 ? 'text-[var(--success)]' : 'text-[var(--warning)]') : scoreTone(value, inverse);
-  return <div className="rounded-xl border border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--muted)]">{label}</div><div className={`mt-0.5 text-lg font-semibold tabular-nums ${tone}`}>{value ?? '—'}</div></div>;
+  return <div className="rounded-xl border border-[var(--border)] bg-white p-3"><div className="text-[10px] text-[var(--muted)]">{label}</div><div className={`mt-0.5 text-xl font-semibold tabular-nums ${tone}`}>{value ?? '—'}</div></div>;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl border border-[var(--border)] p-3"><div className="text-[10px] uppercase tracking-wide text-[var(--muted-2)]">{label}</div><div className="mt-1 line-clamp-2 font-medium capitalize text-[var(--text)]">{value}</div></div>;
+  return <div className="rounded-xl border border-[var(--border)] bg-white p-3"><div className="text-[10px] uppercase tracking-wide text-[var(--muted-2)]">{label}</div><div className="mt-1 line-clamp-2 font-medium capitalize text-[var(--text)]">{value}</div></div>;
 }
 
 function TimelineEvent({ event }: { event: CommunicationEvent }) {
   const automated = event.actor_type === 'automation';
   const inbound = event.direction === 'Inbound';
-  return <div className="rounded-xl border border-[var(--border)] p-3"><div className="flex items-center justify-between gap-3 text-[10px] text-[var(--muted)]"><span className="font-semibold uppercase tracking-wide">{inbound ? 'Customer' : automated ? 'Ava automation' : 'Human outbound'}</span><span>{relativeTime(event.activity_at)}</span></div><p className="mt-1.5 line-clamp-4 text-xs leading-5 text-[var(--text)]">{event.message_clean || `${event.channel} communication`}</p></div>;
+  return <div className="rounded-xl border border-[var(--border)] p-3.5"><div className="flex items-center justify-between gap-3 text-[10px] text-[var(--muted)]"><span className="font-semibold uppercase tracking-wide">{inbound ? 'Customer' : automated ? 'Ava automation' : 'Human outbound'}</span><span>{relativeTime(event.activity_at)}</span></div><p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-[var(--text)]">{event.message_clean || `${event.channel} communication`}</p></div>;
 }
