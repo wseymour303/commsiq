@@ -129,7 +129,8 @@ function findHeaderRow(sheet: ExcelJS.Worksheet) {
 
 export async function parseCommunicationWorkbook(buffer: Buffer): Promise<NormalizedCommunicationEvent[]> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
+  const loadInput = buffer as unknown as Parameters<typeof workbook.xlsx.load>[0];
+  await workbook.xlsx.load(loadInput);
   const sheet = workbook.worksheets.find(ws => ws.name.toLowerCase() === 'report') ?? workbook.worksheets[0];
   if (!sheet) throw new Error('Workbook has no worksheets.');
 
