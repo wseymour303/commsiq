@@ -8,7 +8,7 @@ const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const openAiKey = process.env.OPENAI_API_KEY;
 const model = process.env.COMMUNICATIONIQ_AI_MODEL || 'gpt-5.6-luna';
 
-const MAX_CUSTOMERS_PER_CALL = 12;
+const MAX_CUSTOMERS_PER_CALL = 10;
 const MAX_EVENTS_PER_CUSTOMER = 14;
 const MAX_MESSAGE_CHARS = 1400;
 
@@ -315,20 +315,24 @@ Operating rules:
   return assessments;
 }
 
-export async function assessCommunicationBatch(input: { rooftopId: string; batchId: string }) {
+export async function assessCommunicationBatch(input: {
+  rooftopId: string;
+  batchId: string;
+  customerKeys?: string[];
+}) {
   const supabase = adminClient();
-  const customerKeys = await affectedCustomerKeys(input.batchId, input.rooftopId, supabase);
+  const customerKeys = input.customerKeys?.length
+    ? unique(input.customerKeys)
+    : await affectedCustomerKeys(input.batchId, input.rooftopId, supabase);
   if (!customerKeys.length) {
     return { batchId: input.batchId, customers: 0, assessments: 0, model };
   }
 
   const context = await loadCustomerContext(input.rooftopId, customerKeys, supabase);
-  const allAssessments: ModelAssessment[] = [];
-
-  for (const group of chunks(context, MAX_CUSTOMERS_PER_CALL)) {
-    const groupAssessments = await assessChunk(group);
-    allAssessments.push(...groupAssessments);
-  }
+  const assessmentGroups = await Promise.all(
+    chunks(context, MAX_CUSTOMERS_PER_CALL).map(group => assessChunk(group))
+  );
+  const allAssessments = assessmentGroups.flat();
 
   const assessedAt = new Date().toISOString();
   const rows = allAssessments.map(assessment => ({
