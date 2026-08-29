@@ -12,7 +12,7 @@ const MAX_CUSTOMERS_PER_CALL = 12;
 const MAX_EVENTS_PER_CUSTOMER = 14;
 const MAX_MESSAGE_CHARS = 1400;
 
-const assessmentSchema = {
+const assessmentSchema: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
   required: ['assessments'],
@@ -75,10 +75,10 @@ const assessmentSchema = {
           primary_intent: { type: ['string', 'null'] },
           primary_objection: { type: ['string', 'null'] },
           urgency: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
-          summary: { type: 'string', maxLength: 420 },
-          rationale: { type: 'string', maxLength: 600 },
-          recommended_next_action: { type: 'string', maxLength: 420 },
-          recommended_owner: { type: 'string', maxLength: 100 },
+          summary: { type: 'string' },
+          rationale: { type: 'string' },
+          recommended_next_action: { type: 'string' },
+          recommended_owner: { type: 'string' },
           recommended_due_minutes: { type: ['integer', 'null'], minimum: 0, maximum: 10080 },
           evidence: {
             type: 'array',
@@ -90,7 +90,7 @@ const assessmentSchema = {
               properties: {
                 event_id: { type: 'string' },
                 activity_at: { type: 'string' },
-                reason: { type: 'string', maxLength: 260 }
+                reason: { type: 'string' }
               }
             }
           }
@@ -98,7 +98,7 @@ const assessmentSchema = {
       }
     }
   }
-} as const;
+};
 
 type EventRow = {
   id: string;
