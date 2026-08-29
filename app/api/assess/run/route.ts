@@ -110,7 +110,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await assessCommunicationBatch({ rooftopId, batchId });
+    const result = await assessCommunicationBatch({ rooftopId, batchId, customerKeys });
     return NextResponse.json({ alreadyAssessed: false, superseded: false, ...result });
   } catch (error) {
     console.error('CommunicationIQ AI assessment failed', error);
