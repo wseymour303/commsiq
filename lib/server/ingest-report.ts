@@ -1,0 +1,188 @@
+import 'server-only';
+
+import { createClient } from '@supabase/supabase-js';
+import { parseCommunicationWorkbook, type NormalizedCommunicationEvent } from './report-xlsx';
+
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+type StateEventRow = {
+  customer_key: string;
+  customer_name: string;
+  salesperson: string | null;
+  activity_at: string;
+  direction: string;
+  lead_status: string | null;
+  lead_source: string | null;
+  is_automated: boolean;
+};
+
+function adminClient() {
+  if (!url || !serviceRoleKey) throw new Error('Supabase server configuration is incomplete.');
+  return createClient(url, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  });
+}
+
+function unique<T>(values: T[]) {
+  return [...new Set(values)];
+}
+
+function latestNonNull<K extends keyof StateEventRow>(rows: StateEventRow[], key: K): StateEventRow[K] | null {
+  for (const row of rows) {
+    const value = row[key];
+    if (value != null && value !== '') return value;
+  }
+  return null;
+}
+
+async function refreshCustomerStates(
+  rooftopId: string,
+  customerKeys: string[],
+  supabase: ReturnType<typeof adminClient>
+) {
+  if (!customerKeys.length) return;
+  const { data, error } = await supabase
+    .from('communication_events')
+    .select('customer_key,customer_name,salesperson,activity_at,direction,lead_status,lead_source,is_automated')
+    .eq('rooftop_id', rooftopId)
+    .in('customer_key', customerKeys)
+    .order('activity_at', { ascending: false });
+  if (error) throw error;
+
+  const grouped = new Map<string, StateEventRow[]>();
+  for (const row of (data ?? []) as StateEventRow[]) {
+    const list = grouped.get(row.customer_key) ?? [];
+    list.push(row);
+    grouped.set(row.customer_key, list);
+  }
+
+  const now = Date.now();
+  const states = [...grouped.entries()].map(([customerKey, rows]) => {
+    const ordered = [...rows].sort((a, b) => new Date(b.activity_at).getTime() - new Date(a.activity_at).getTime());
+    const ascending = [...ordered].reverse();
+    const inbound = ordered.filter(row => row.direction === 'Inbound');
+    const outbound = ordered.filter(row => row.direction === 'Outbound');
+    const humanOutbound = outbound.filter(row => !row.is_automated);
+    const automatedOutbound = outbound.filter(row => row.is_automated);
+    const lastInbound = inbound[0]?.activity_at ?? null;
+    const lastHumanOutbound = humanOutbound[0]?.activity_at ?? null;
+    const awaitingHumanResponse = Boolean(
+      lastInbound && (!lastHumanOutbound || new Date(lastHumanOutbound).getTime() < new Date(lastInbound).getTime())
+    );
+    const salesperson = ordered.find(row => row.salesperson && !row.is_automated)?.salesperson
+      ?? latestNonNull(ordered, 'salesperson');
+
+    return {
+      rooftop_id: rooftopId,
+      customer_key: customerKey,
+      customer_name: ordered[0]?.customer_name ?? 'Unknown customer',
+      salesperson,
+      lead_status: latestNonNull(ordered, 'lead_status'),
+      lead_source: latestNonNull(ordered, 'lead_source'),
+      first_activity_at: ascending[0]?.activity_at ?? null,
+      last_activity_at: ordered[0]?.activity_at ?? null,
+      last_inbound_at: lastInbound,
+      last_outbound_at: outbound[0]?.activity_at ?? null,
+      last_human_outbound_at: lastHumanOutbound,
+      inbound_count: inbound.length,
+      outbound_count: outbound.length,
+      automated_outbound_count: automatedOutbound.length,
+      human_outbound_count: humanOutbound.length,
+      awaiting_human_response: awaitingHumanResponse,
+      minutes_waiting: awaitingHumanResponse && lastInbound
+        ? Math.max(0, Math.floor((now - new Date(lastInbound).getTime()) / 60000))
+        : null,
+      updated_at: new Date().toISOString()
+    };
+  });
+
+  if (states.length) {
+    const { error: stateError } = await supabase
+      .from('communication_customer_state')
+      .upsert(states, { onConflict: 'rooftop_id,customer_key' });
+    if (stateError) throw stateError;
+  }
+}
+
+export async function ingestCommunicationWorkbook(input: {
+  rooftopId: string;
+  buffer: Buffer;
+  fileName: string;
+  source?: string;
+  sourceMessageId?: string | null;
+}) {
+  const supabase = adminClient();
+  const events = await parseCommunicationWorkbook(input.buffer);
+  const fingerprints = events.map(event => event.source_fingerprint);
+
+  const { data: existing, error: existingError } = await supabase
+    .from('communication_events')
+    .select('source_fingerprint')
+    .eq('rooftop_id', input.rooftopId)
+    .in('source_fingerprint', fingerprints);
+  if (existingError) throw existingError;
+  const existingSet = new Set((existing ?? []).map(row => row.source_fingerprint));
+
+  const { data: batch, error: batchError } = await supabase
+    .from('communication_ingest_batches')
+    .insert({
+      rooftop_id: input.rooftopId,
+      source: input.source ?? 'xlsx_upload',
+      source_file_name: input.fileName,
+      source_message_id: input.sourceMessageId ?? null,
+      row_count: events.length,
+      inserted_count: 0,
+      duplicate_count: 0,
+      status: 'processing',
+      metadata: { parser: 'commsiq-xlsx-v1' }
+    })
+    .select('id')
+    .single();
+  if (batchError) throw batchError;
+
+  const rows = events.map((event: NormalizedCommunicationEvent) => ({
+    ...event,
+    rooftop_id: input.rooftopId,
+    ingest_batch_id: batch.id
+  }));
+
+  try {
+    for (let index = 0; index < rows.length; index += 100) {
+      const chunk = rows.slice(index, index + 100);
+      const { error } = await supabase
+        .from('communication_events')
+        .upsert(chunk, { onConflict: 'rooftop_id,source_fingerprint' });
+      if (error) throw error;
+    }
+
+    await refreshCustomerStates(input.rooftopId, unique(events.map(event => event.customer_key)), supabase);
+
+    const insertedCount = events.filter(event => !existingSet.has(event.source_fingerprint)).length;
+    const updatedCount = events.length - insertedCount;
+    const { error: completeError } = await supabase
+      .from('communication_ingest_batches')
+      .update({
+        inserted_count: insertedCount,
+        duplicate_count: updatedCount,
+        status: 'completed',
+        metadata: { parser: 'commsiq-xlsx-v1', updated_count: updatedCount }
+      })
+      .eq('id', batch.id);
+    if (completeError) throw completeError;
+
+    return {
+      batchId: batch.id,
+      rows: events.length,
+      inserted: insertedCount,
+      updated: updatedCount,
+      customers: unique(events.map(event => event.customer_key)).length
+    };
+  } catch (error) {
+    await supabase
+      .from('communication_ingest_batches')
+      .update({ status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown ingestion error' })
+      .eq('id', batch.id);
+    throw error;
+  }
+}
