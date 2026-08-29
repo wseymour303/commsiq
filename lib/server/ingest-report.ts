@@ -115,6 +115,7 @@ export async function ingestCommunicationWorkbook(input: {
   const supabase = adminClient();
   const events = await parseCommunicationWorkbook(input.buffer);
   const fingerprints = events.map(event => event.source_fingerprint);
+  const customerKeys = unique(events.map(event => event.customer_key));
 
   const { data: existing, error: existingError } = await supabase
     .from('communication_events')
@@ -135,7 +136,7 @@ export async function ingestCommunicationWorkbook(input: {
       inserted_count: 0,
       duplicate_count: 0,
       status: 'processing',
-      metadata: { parser: 'commsiq-xlsx-v1' }
+      metadata: { parser: 'commsiq-xlsx-v1', customer_keys: customerKeys }
     })
     .select('id')
     .single();
@@ -156,7 +157,7 @@ export async function ingestCommunicationWorkbook(input: {
       if (error) throw error;
     }
 
-    await refreshCustomerStates(input.rooftopId, unique(events.map(event => event.customer_key)), supabase);
+    await refreshCustomerStates(input.rooftopId, customerKeys, supabase);
 
     const insertedCount = events.filter(event => !existingSet.has(event.source_fingerprint)).length;
     const updatedCount = events.length - insertedCount;
@@ -166,7 +167,7 @@ export async function ingestCommunicationWorkbook(input: {
         inserted_count: insertedCount,
         duplicate_count: updatedCount,
         status: 'completed',
-        metadata: { parser: 'commsiq-xlsx-v1', updated_count: updatedCount }
+        metadata: { parser: 'commsiq-xlsx-v1', updated_count: updatedCount, customer_keys: customerKeys }
       })
       .eq('id', batch.id);
     if (completeError) throw completeError;
@@ -176,7 +177,7 @@ export async function ingestCommunicationWorkbook(input: {
       rows: events.length,
       inserted: insertedCount,
       updated: updatedCount,
-      customers: unique(events.map(event => event.customer_key)).length
+      customers: customerKeys.length
     };
   } catch (error) {
     await supabase

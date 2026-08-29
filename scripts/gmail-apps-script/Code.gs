@@ -1,6 +1,7 @@
 const COMMSIQ_QUERY = 'from:reportscheduler@motosnap.com subject:"todays comms" has:attachment filename:xlsx newer_than:2d';
 const PROCESSED_KEY = 'COMMSIQ_PROCESSED_MESSAGE_IDS';
 const MAX_PROCESSED_IDS = 250;
+const MAX_ASSESSMENT_REQUESTS = 25;
 
 function ingestMotoSnapReports() {
   const lock = LockService.getScriptLock();
@@ -69,24 +70,13 @@ function ingestMotoSnapReports() {
             break;
           }
 
-          const assessmentResponse = UrlFetchApp.fetch(assessmentEndpoint, {
-            method: 'post',
-            contentType: 'application/json',
-            headers: {
-              'x-commsiq-ingest-secret': secret
-            },
-            payload: JSON.stringify({ batchId }),
-            muteHttpExceptions: true
-          });
-
-          const assessmentCode = assessmentResponse.getResponseCode();
-          if (assessmentCode < 200 || assessmentCode >= 300) {
-            console.error(`CommsIQ AI assessment failed for ${messageId}: HTTP ${assessmentCode} ${assessmentResponse.getContentText()}`);
+          const assessmentResult = runAssessmentToCompletion_(assessmentEndpoint, secret, batchId, messageId);
+          if (!assessmentResult.success) {
             messageSucceeded = false;
             break;
           }
 
-          console.log(`CommsIQ processed ${messageId}: ${response.getContentText()} assessment=${assessmentResponse.getContentText()}`);
+          console.log(`CommsIQ processed ${messageId}: ${response.getContentText()} assessment=${assessmentResult.body}`);
         }
 
         if (messageSucceeded) {
@@ -100,6 +90,46 @@ function ingestMotoSnapReports() {
   } finally {
     lock.releaseLock();
   }
+}
+
+function runAssessmentToCompletion_(endpoint, secret, batchId, messageId) {
+  let lastBody = '';
+
+  for (let attempt = 1; attempt <= MAX_ASSESSMENT_REQUESTS; attempt += 1) {
+    const response = UrlFetchApp.fetch(endpoint, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: {
+        'x-commsiq-ingest-secret': secret
+      },
+      payload: JSON.stringify({ batchId }),
+      muteHttpExceptions: true
+    });
+
+    const code = response.getResponseCode();
+    lastBody = response.getContentText();
+    if (code < 200 || code >= 300) {
+      console.error(`CommsIQ AI assessment failed for ${messageId}: HTTP ${code} ${lastBody}`);
+      return { success: false, body: lastBody };
+    }
+
+    let result;
+    try {
+      result = JSON.parse(lastBody);
+    } catch (error) {
+      console.error(`CommsIQ assessment returned invalid JSON for ${messageId}`, error);
+      return { success: false, body: lastBody };
+    }
+
+    console.log(`CommsIQ assessment progress for ${messageId}: ${lastBody}`);
+
+    if (result.complete === true || result.alreadyAssessed === true || result.superseded === true) {
+      return { success: true, body: lastBody };
+    }
+  }
+
+  console.error(`CommsIQ assessment did not complete within ${MAX_ASSESSMENT_REQUESTS} requests for ${messageId}.`);
+  return { success: false, body: lastBody };
 }
 
 function setupCommsIqTrigger() {
