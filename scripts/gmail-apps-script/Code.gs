@@ -12,10 +12,11 @@ function ingestMotoSnapReports() {
   try {
     const props = PropertiesService.getScriptProperties();
     const endpoint = String(props.getProperty('COMMSIQ_INGEST_URL') || '').trim();
+    const assessmentEndpoint = String(props.getProperty('COMMSIQ_ASSESS_URL') || '').trim();
     const secret = String(props.getProperty('COMMSIQ_INGEST_SECRET') || '').trim();
 
-    if (!endpoint || !secret) {
-      throw new Error('Set COMMSIQ_INGEST_URL and COMMSIQ_INGEST_SECRET in Script Properties.');
+    if (!endpoint || !assessmentEndpoint || !secret) {
+      throw new Error('Set COMMSIQ_INGEST_URL, COMMSIQ_ASSESS_URL, and COMMSIQ_INGEST_SECRET in Script Properties.');
     }
 
     const processed = new Set(readProcessedIds_(props));
@@ -51,6 +52,41 @@ function ingestMotoSnapReports() {
             messageSucceeded = false;
             break;
           }
+
+          let ingestResult;
+          try {
+            ingestResult = JSON.parse(response.getContentText());
+          } catch (error) {
+            console.error(`CommsIQ ingest returned invalid JSON for ${messageId}`, error);
+            messageSucceeded = false;
+            break;
+          }
+
+          const batchId = String(ingestResult.batchId || '').trim();
+          if (!batchId) {
+            console.error(`CommsIQ ingest returned no batchId for ${messageId}.`);
+            messageSucceeded = false;
+            break;
+          }
+
+          const assessmentResponse = UrlFetchApp.fetch(assessmentEndpoint, {
+            method: 'post',
+            contentType: 'application/json',
+            headers: {
+              'x-commsiq-ingest-secret': secret
+            },
+            payload: JSON.stringify({ batchId }),
+            muteHttpExceptions: true
+          });
+
+          const assessmentCode = assessmentResponse.getResponseCode();
+          if (assessmentCode < 200 || assessmentCode >= 300) {
+            console.error(`CommsIQ AI assessment failed for ${messageId}: HTTP ${assessmentCode} ${assessmentResponse.getContentText()}`);
+            messageSucceeded = false;
+            break;
+          }
+
+          console.log(`CommsIQ processed ${messageId}: ${response.getContentText()} assessment=${assessmentResponse.getContentText()}`);
         }
 
         if (messageSucceeded) {
