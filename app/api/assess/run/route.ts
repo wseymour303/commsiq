@@ -6,6 +6,8 @@ import { assessCommunicationBatch } from '@/lib/server/assess-communications';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const CUSTOMERS_PER_REQUEST = 5;
+
 function safeSecretMatch(received: string, expected: string) {
   const left = createHash('sha256').update(received).digest();
   const right = createHash('sha256').update(expected).digest();
@@ -82,9 +84,11 @@ export async function POST(request: Request) {
     return NextResponse.json({
       alreadyAssessed: false,
       superseded: true,
+      complete: true,
       batchId,
       customers: 0,
-      assessments: 0
+      assessments: 0,
+      remaining: 0
     });
   }
 
@@ -99,19 +103,36 @@ export async function POST(request: Request) {
   }
 
   const assessedKeys = new Set((existing ?? []).map(row => String(row.customer_key)));
-  if (customerKeys.every(customerKey => assessedKeys.has(customerKey))) {
+  const pendingKeys = customerKeys.filter(customerKey => !assessedKeys.has(customerKey));
+
+  if (!pendingKeys.length) {
     return NextResponse.json({
       alreadyAssessed: true,
       superseded: false,
+      complete: true,
       batchId,
       customers: customerKeys.length,
-      assessments: customerKeys.length
+      assessments: customerKeys.length,
+      remaining: 0
     });
   }
 
+  const currentKeys = pendingKeys.slice(0, CUSTOMERS_PER_REQUEST);
+
   try {
-    const result = await assessCommunicationBatch({ rooftopId, batchId, customerKeys });
-    return NextResponse.json({ alreadyAssessed: false, superseded: false, ...result });
+    const result = await assessCommunicationBatch({ rooftopId, batchId, customerKeys: currentKeys });
+    const remaining = Math.max(0, pendingKeys.length - currentKeys.length);
+    return NextResponse.json({
+      alreadyAssessed: false,
+      superseded: false,
+      complete: remaining === 0,
+      batchId,
+      customers: customerKeys.length,
+      assessedThisRequest: result.assessments,
+      assessments: customerKeys.length - remaining,
+      remaining,
+      model: result.model
+    });
   } catch (error) {
     console.error('CommunicationIQ AI assessment failed', error);
     return NextResponse.json(
