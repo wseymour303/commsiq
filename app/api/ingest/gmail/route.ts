@@ -48,6 +48,21 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ alreadyProcessed: result.rooftops.every(rooftop => rooftop.alreadyProcessed), ...result });
   } catch (error) {
+    if (error instanceof Error && error.message === 'The report contained no communication events.') {
+      console.info(`CommunicationIQ Gmail report ${sourceMessageId} contained no communication events; treating as a successful no-op.`);
+      return NextResponse.json({
+        alreadyProcessed: true,
+        noData: true,
+        rows: 0,
+        inserted: 0,
+        updated: 0,
+        customers: 0,
+        batchId: null,
+        batchIds: [],
+        rooftops: []
+      });
+    }
+
     console.error('CommunicationIQ Gmail ingestion failed', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Gmail report ingestion failed.' }, { status: 400 });
   }
