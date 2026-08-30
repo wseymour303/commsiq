@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { assessCommunicationBatch } from '@/lib/server/assess-communications';
+import { sendManagerNotifications } from '@/lib/server/manager-notifications';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -73,7 +74,27 @@ export async function POST(request: Request) {
   try {
     const result = await assessCommunicationBatch({ rooftopId, batchId, customerKeys: currentKeys });
     const remaining = Math.max(0, pendingKeys.length - currentKeys.length);
-    return NextResponse.json({ alreadyAssessed: false, superseded: false, complete: remaining === 0, batchId, rooftopId, customers: customerKeys.length, assessedThisRequest: result.assessments, assessments: customerKeys.length - remaining, remaining, model: result.model });
+
+    let notifications = { candidates: 0, sent: 0, skipped: true };
+    try {
+      notifications = await sendManagerNotifications({ rooftopId, customerKeys: currentKeys });
+    } catch (notificationError) {
+      console.error('CommunicationIQ manager notification evaluation failed', notificationError);
+    }
+
+    return NextResponse.json({
+      alreadyAssessed: false,
+      superseded: false,
+      complete: remaining === 0,
+      batchId,
+      rooftopId,
+      customers: customerKeys.length,
+      assessedThisRequest: result.assessments,
+      assessments: customerKeys.length - remaining,
+      remaining,
+      model: result.model,
+      notifications
+    });
   } catch (error) {
     console.error('CommunicationIQ AI assessment failed', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'AI assessment failed.' }, { status: 500 });
