@@ -59,3 +59,21 @@ button { -webkit-tap-highlight-color: transparent; }
   border-color: #7f9db9;
   box-shadow: 0 0 0 3px rgba(23,59,103,.08);
 }
+
+/* Team desktop split-view: keep the selected salesperson panel usable without
+   forcing the coaching queue/page to reach the same vertical position first. */
+@media (min-width: 1280px) {
+  main aside[class*="xl:sticky"][class*="xl:top-[84px]"] {
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  main aside[class*="xl:sticky"][class*="xl:top-[84px]"] > div:first-child {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface);
+  }
+}
