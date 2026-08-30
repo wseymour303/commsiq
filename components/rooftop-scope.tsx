@@ -53,6 +53,7 @@ export function RooftopScopeProvider({ children }: { children: ReactNode }) {
         const next = valid ? stored! : fallback;
         setSelectedState(next);
         window.localStorage.setItem(STORAGE_KEY, next);
+        setRevision(value => value + 1);
       } finally {
         if (!cancelled) setLoading(false);
       }
