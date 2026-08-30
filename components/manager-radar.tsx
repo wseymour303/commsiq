@@ -8,19 +8,35 @@ import { ArrowIcon, CheckIcon, ClockIcon, RefreshIcon, SparkIcon } from './icons
 
 const rooftopId = process.env.NEXT_PUBLIC_COMMUNICATIONIQ_ROOFTOP_ID;
 
-const filters: Array<{ id: RadarFilter; label: string }> = [
-  { id: 'attention', label: 'Needs Attention' },
-  { id: 'buying', label: 'Buying Now' },
-  { id: 'waiting', label: 'Waiting on Us' },
-  { id: 'price', label: 'Price / Payment' },
-  { id: 'appointment', label: 'Appointments' },
-  { id: 'risk', label: 'CX Risk' },
-  { id: 'future', label: 'Future Follow-Up' },
-  { id: 'overcontact', label: 'Over-Contact' },
-  { id: 'dnc', label: 'Do Not Contact' },
-  { id: 'advocate', label: 'Positive' },
-  { id: 'all', label: 'All' }
+type ActionGroup = 'act' | 'sales' | 'followup' | 'positive';
+
+const actionGroups: Array<{ id: ActionGroup; label: string; description: string; filters: RadarFilter[] }> = [
+  { id: 'act', label: 'Act Now', description: 'Waiting, risk, DNC, and urgent intervention', filters: ['attention', 'waiting', 'risk', 'dnc'] },
+  { id: 'sales', label: 'Sales Opportunities', description: 'Buying, pricing, and appointments', filters: ['buying', 'price', 'appointment'] },
+  { id: 'followup', label: 'Follow-Up', description: 'Future timing and over-contact risk', filters: ['future', 'overcontact'] },
+  { id: 'positive', label: 'Positive', description: 'Strong customer experiences', filters: ['advocate'] }
 ];
+
+const subfilters: Record<ActionGroup, Array<{ id: RadarFilter; label: string }>> = {
+  act: [
+    { id: 'attention', label: 'Needs Attention' },
+    { id: 'waiting', label: 'Waiting on Us' },
+    { id: 'risk', label: 'CX Risk' },
+    { id: 'dnc', label: 'Do Not Contact' }
+  ],
+  sales: [
+    { id: 'buying', label: 'Buying Now' },
+    { id: 'price', label: 'Price / Payment' },
+    { id: 'appointment', label: 'Appointments' }
+  ],
+  followup: [
+    { id: 'future', label: 'Future Follow-Up' },
+    { id: 'overcontact', label: 'Over-Contact' }
+  ],
+  positive: [
+    { id: 'advocate', label: 'Positive Experiences' }
+  ]
+};
 
 const queueLabel: Record<RadarFilter, string> = {
   attention: 'Needs attention', buying: 'Buying now', waiting: 'Waiting on us', price: 'Price / payment', appointment: 'Appointment opportunity', future: 'Future follow-up', overcontact: 'Over-contact risk', advocate: 'Positive experience', risk: 'Customer experience risk', dnc: 'Do not contact', all: 'All conversations'
@@ -82,9 +98,14 @@ function sortRadarItems(items: RadarItem[]) {
   });
 }
 
+function matchesActionGroup(item: RadarItem, group: ActionGroup) {
+  return actionGroups.find(entry => entry.id === group)?.filters.some(filter => matchesRadarFilter(item, filter)) ?? false;
+}
+
 export function ManagerRadar() {
   const [items, setItems] = useState<RadarItem[]>([]);
-  const [filter, setFilter] = useState<RadarFilter>('attention');
+  const [group, setGroup] = useState<ActionGroup>('act');
+  const [subfilter, setSubfilter] = useState<RadarFilter | null>(null);
   const [selectedKey, setSelectedKey] = useState('');
   const [detailOpen, setDetailOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -126,8 +147,9 @@ export function ManagerRadar() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const counts = useMemo(() => Object.fromEntries(filters.map(item => [item.id, items.filter(radarItem => matchesRadarFilter(radarItem, item.id)).length])), [items]);
-  const filtered = useMemo(() => items.filter(item => matchesRadarFilter(item, filter)), [items, filter]);
+  const groupCounts = useMemo(() => Object.fromEntries(actionGroups.map(entry => [entry.id, items.filter(item => matchesActionGroup(item, entry.id)).length])), [items]);
+  const subCounts = useMemo(() => Object.fromEntries(subfilters[group].map(entry => [entry.id, items.filter(item => matchesRadarFilter(item, entry.id)).length])), [group, items]);
+  const filtered = useMemo(() => items.filter(item => subfilter ? matchesRadarFilter(item, subfilter) : matchesActionGroup(item, group)), [items, group, subfilter]);
   const selectedIndex = Math.max(0, filtered.findIndex(item => item.customer.customer_key === selectedKey));
   const selected = filtered[selectedIndex] ?? items.find(item => item.customer.customer_key === selectedKey) ?? filtered[0] ?? items[0];
   const highPriority = items.filter(item => item.priority === 'critical' || item.priority === 'high').length;
@@ -136,6 +158,14 @@ export function ManagerRadar() {
   const buying = items.filter(item => matchesRadarFilter(item, 'buying')).length;
   const risk = items.filter(item => matchesRadarFilter(item, 'risk')).length;
   const assessed = items.filter(item => item.assessment).length;
+  const activeGroup = actionGroups.find(entry => entry.id === group)!;
+  const listLabel = subfilter ? queueLabel[subfilter] : activeGroup.label;
+
+  const selectGroup = useCallback((nextGroup: ActionGroup) => {
+    setGroup(nextGroup);
+    setSubfilter(null);
+    setSelectedKey('');
+  }, []);
 
   const openDetail = useCallback((customerKey: string) => {
     setSelectedKey(customerKey);
@@ -190,12 +220,26 @@ export function ManagerRadar() {
           </div>
         </section>
 
-        <div className="no-scrollbar -mx-3 mt-3 flex gap-2 overflow-x-auto px-3 sm:-mx-5 sm:px-5 lg:mx-0 lg:px-0">
-          {filters.map(item => <button key={item.id} onClick={() => setFilter(item.id)} className={`min-h-11 shrink-0 rounded-full border px-3.5 text-sm font-medium transition ${filter === item.id ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'}`}>{item.label}<span className={`ml-2 text-xs ${filter === item.id ? 'text-white/65' : 'text-[var(--muted-2)]'}`}>{counts[item.id] ?? 0}</span></button>)}
-        </div>
+        <section className="mt-3">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            {actionGroups.map(entry => {
+              const active = group === entry.id;
+              return <button key={entry.id} onClick={() => selectGroup(entry.id)} className={`min-w-0 rounded-2xl border p-3 text-left transition sm:p-4 ${active ? 'border-[var(--brand)] bg-[var(--brand)] text-white shadow-sm' : 'border-[var(--border)] bg-white text-[var(--text)] hover:border-[var(--border-strong)]'}`}>
+                <div className={`text-[10px] font-semibold uppercase tracking-[0.1em] ${active ? 'text-white/70' : 'text-[var(--muted)]'}`}>Manager workflow</div>
+                <div className="mt-1 flex items-end justify-between gap-2"><span className="text-sm font-semibold sm:text-base">{entry.label}</span><span className="text-xl font-semibold tabular-nums sm:text-2xl">{groupCounts[entry.id] ?? 0}</span></div>
+                <div className={`mt-1 hidden text-[11px] leading-4 sm:block ${active ? 'text-white/70' : 'text-[var(--muted-2)]'}`}>{entry.description}</div>
+              </button>;
+            })}
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--border)] bg-white p-2.5">
+            <button onClick={() => { setSubfilter(null); setSelectedKey(''); }} className={`min-h-9 rounded-full border px-3 text-xs font-semibold transition ${subfilter === null ? 'border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]'}`}>All {activeGroup.label} <span className="ml-1.5 opacity-65">{groupCounts[group] ?? 0}</span></button>
+            {subfilters[group].map(entry => <button key={entry.id} onClick={() => { setSubfilter(entry.id); setSelectedKey(''); }} className={`min-h-9 rounded-full border px-3 text-xs font-semibold transition ${subfilter === entry.id ? 'border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]'}`}>{entry.label}<span className="ml-1.5 opacity-65">{subCounts[entry.id] ?? 0}</span></button>)}
+          </div>
+        </section>
 
         <section className="mt-3 min-w-0">
-          <div className="mb-2 flex items-center justify-between px-1 text-xs text-[var(--muted)]"><span>{queueLabel[filter]}</span><span>{filtered.length} conversations</span></div>
+          <div className="mb-2 flex items-center justify-between px-1 text-xs text-[var(--muted)]"><span>{listLabel}</span><span>{filtered.length} conversations</span></div>
           {!loading && filtered.length === 0 && <div className="rounded-2xl border border-dashed border-[var(--border-strong)] bg-white p-9 text-center"><CheckIcon className="mx-auto text-[var(--success)]"/><div className="mt-3 font-semibold">Nothing in this queue</div><p className="mt-1 text-sm text-[var(--muted)]">No current conversations match this signal.</p></div>}
           <div className="space-y-2.5">{filtered.map(item => <RadarCard key={item.customer.customer_key} item={item} onSelect={() => openDetail(item.customer.customer_key)} />)}</div>
         </section>
