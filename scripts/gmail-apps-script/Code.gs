@@ -54,6 +54,11 @@ function ingestMotoSnapReports() {
             break;
           }
 
+          if (ingestResult.noData === true) {
+            console.log(`CommsIQ processed ${messageId}: valid MotoSnap no-data report.`);
+            continue;
+          }
+
           const batchIds = Array.isArray(ingestResult.batchIds)
             ? ingestResult.batchIds.map(String).filter(Boolean)
             : [String(ingestResult.batchId || '').trim()].filter(Boolean);
