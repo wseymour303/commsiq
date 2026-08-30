@@ -3,9 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { rooftopName } from '@/lib/rooftops';
+import { useRooftopScope, type Role } from './rooftop-scope';
 
-type Role = 'user' | 'manager' | 'admin' | 'super_admin';
-type AccessRow = { rooftop_id: string; role: Role; active: boolean };
 type ProfileRow = { full_name: string | null; email: string | null; title: string | null };
 
 function roleLabel(role: Role) {
@@ -25,11 +24,11 @@ function initials(name: string, email: string) {
 export function AccountMenu() {
   const [open, setOpen] = useState(false);
   const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [access, setAccess] = useState<AccessRow[]>([]);
   const [email, setEmail] = useState('');
   const [aal, setAal] = useState('aal1');
   const [loading, setLoading] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
+  const { access, selected, selectedLabel, loading: scopeLoading, setSelected } = useRooftopScope();
 
   useEffect(() => {
     let cancelled = false;
@@ -39,14 +38,12 @@ export function AccountMenu() {
       try {
         const { data: userData } = await supabase.auth.getUser();
         if (!userData.user) return;
-        const [{ data: profileRow }, { data: accessRows }, { data: assurance }] = await Promise.all([
+        const [{ data: profileRow }, { data: assurance }] = await Promise.all([
           supabase.from('profiles').select('full_name,email,title').eq('user_id', userData.user.id).maybeSingle(),
-          supabase.from('commsiq_access').select('rooftop_id,role,active').eq('user_id', userData.user.id).eq('active', true),
           supabase.auth.mfa.getAuthenticatorAssuranceLevel()
         ]);
         if (cancelled) return;
         setProfile((profileRow ?? null) as ProfileRow | null);
-        setAccess((accessRows ?? []) as AccessRow[]);
         setEmail(String(profileRow?.email ?? userData.user.email ?? ''));
         setAal(assurance?.currentLevel ?? 'aal1');
       } finally {
@@ -79,15 +76,26 @@ export function AccountMenu() {
   async function signOut() {
     const supabase = getSupabaseBrowserClient();
     if (supabase) await supabase.auth.signOut();
+    window.localStorage.removeItem('commsiq_rooftop_scope');
+    window.localStorage.removeItem('commsiq_authorized_rooftops');
     window.location.assign('/');
   }
 
   return <div ref={rootRef} className="relative">
     <button type="button" onClick={() => setOpen(value => !value)} aria-label="Open account menu" aria-expanded={open} className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-white text-xs font-semibold text-[var(--text)] transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-subtle)]">{loading ? '…' : badge}</button>
-    {open && <div className="absolute right-0 top-12 z-[90] w-[min(92vw,360px)] overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_55px_rgba(15,23,42,.18)]">
+    {open && <div className="absolute right-0 top-12 z-[90] w-[min(92vw,380px)] overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_55px_rgba(15,23,42,.18)]">
       <div className="border-b border-[var(--border)] p-4">
         <div className="flex items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-sm font-semibold text-white">{badge}</div><div className="min-w-0"><div className="truncate text-sm font-semibold">{name}</div><div className="truncate text-xs text-[var(--muted)]">{email || 'Work email unavailable'}</div></div></div>
         <div className="mt-3 flex flex-wrap gap-2"><span className="rounded-full bg-[var(--brand-soft)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[.08em] text-[var(--brand)]">{roleLabel(highestRole)}</span>{profile?.title && <span className="rounded-full bg-[var(--surface-subtle)] px-2.5 py-1 text-[10px] font-medium text-[var(--muted)]">{profile.title}</span>}</div>
+      </div>
+
+      <div className="border-b border-[var(--border)] p-4">
+        <div className="flex items-end justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-[.1em] text-[var(--muted-2)]">Data scope</div><div className="mt-1 text-xs text-[var(--muted)]">Choose which authorized rooftop powers Radar, Conversations, and Team.</div></div></div>
+        <select value={selected} disabled={scopeLoading || !access.length} onChange={event => setSelected(event.target.value)} className="mt-3 min-h-11 w-full rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-medium outline-none focus:border-[var(--brand)]">
+          {access.length > 1 && <option value="all">All Stores</option>}
+          {access.map(row => <option key={row.rooftop_id} value={row.rooftop_id}>{rooftopName(row.rooftop_id)}</option>)}
+        </select>
+        <div className="mt-2 text-[11px] text-[var(--muted-2)]">Currently viewing: <span className="font-semibold text-[var(--text)]">{selectedLabel}</span></div>
       </div>
 
       <div className="p-4">
