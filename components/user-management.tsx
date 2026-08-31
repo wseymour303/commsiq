@@ -28,11 +28,10 @@ type UserDraft = {
   memberships: Record<string, DraftMembership>;
 };
 
-const ROLES: Array<{ value: Role; label: string }> = [
+const ASSIGNABLE_ROLES: Array<{ value: Exclude<Role, 'super_admin'>; label: string }> = [
   { value: 'user', label: 'User' },
   { value: 'manager', label: 'Manager' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'super_admin', label: 'Super Admin' }
+  { value: 'admin', label: 'Admin' }
 ];
 
 function blankMemberships() {
@@ -154,9 +153,9 @@ export function UserManagement() {
           <div className="grid gap-3 sm:grid-cols-2"><Field label="Full name"><input value={draft.fullName} onChange={e=>setDraft({...draft,fullName:e.target.value})} className="admin-input"/></Field><Field label="Title"><input value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})} className="admin-input" placeholder="Optional"/></Field></div>
           <Field label="Work email"><input type="email" disabled={Boolean(draft.userId)} value={draft.email} onChange={e=>setDraft({...draft,email:e.target.value})} className="admin-input disabled:bg-[var(--surface-subtle)] disabled:text-[var(--muted)]"/><div className="mt-1 text-[11px] text-[var(--muted)]">{draft.userId ? 'Email is tied to the shared AutomotiveIQ Auth account and is not edited here.' : 'Existing AutomotiveIQ users are reused; new users receive a Supabase invitation.'}</div></Field>
 
-          <div className="mt-5"><div className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">Rooftop access</div><div className="mt-2 space-y-2">{COMMSIQ_ROOFTOPS.map(rooftop=>{const row=draft.memberships[rooftop.id];return <div key={rooftop.id} className="rounded-xl border border-[var(--border)] p-3"><div className="flex items-center justify-between gap-3"><label className="flex min-w-0 items-center gap-2"><input type="checkbox" checked={row.enabled} onChange={e=>setDraft({...draft,memberships:{...draft.memberships,[rooftop.id]:{...row,enabled:e.target.checked}}})}/><span className="truncate text-sm font-medium">{rooftop.name}</span></label><select disabled={!row.enabled} value={row.role} onChange={e=>setDraft({...draft,memberships:{...draft.memberships,[rooftop.id]:{...row,role:e.target.value as Role}}})} className="min-h-9 rounded-lg border border-[var(--border)] bg-white px-2 text-xs disabled:opacity-40">{ROLES.map(role=><option key={role.value} value={role.value}>{role.label}</option>)}</select></div></div>})}</div></div>
+          <div className="mt-5"><div className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">Rooftop access</div><div className="mt-2 space-y-2">{COMMSIQ_ROOFTOPS.map(rooftop=>{const row=draft.memberships[rooftop.id];const lockedSuperAdmin=row.role==='super_admin';return <div key={rooftop.id} className="rounded-xl border border-[var(--border)] p-3"><div className="flex items-center justify-between gap-3"><label className="flex min-w-0 items-center gap-2"><input type="checkbox" disabled={lockedSuperAdmin} checked={row.enabled} onChange={e=>setDraft({...draft,memberships:{...draft.memberships,[rooftop.id]:{...row,enabled:e.target.checked}}})}/><span className="truncate text-sm font-medium">{rooftop.name}</span></label>{lockedSuperAdmin ? <span className="rounded-lg bg-[var(--brand)] px-2.5 py-2 text-[10px] font-semibold uppercase tracking-[.06em] text-white">Super Admin · Locked</span> : <select disabled={!row.enabled} value={row.role} onChange={e=>setDraft({...draft,memberships:{...draft.memberships,[rooftop.id]:{...row,role:e.target.value as Role}}})} className="min-h-9 rounded-lg border border-[var(--border)] bg-white px-2 text-xs disabled:opacity-40">{ASSIGNABLE_ROLES.map(role=><option key={role.value} value={role.value}>{role.label}</option>)}</select>}</div></div>})}</div></div>
 
-          <div className="mt-5 rounded-xl bg-[var(--surface-subtle)] p-3 text-xs leading-5 text-[var(--muted)]">Removing all rooftop selections disables this person’s CommsIQ access only. It does not delete or disable their shared AutomotiveIQ Auth account.</div>
+          <div className="mt-5 rounded-xl bg-[var(--surface-subtle)] p-3 text-xs leading-5 text-[var(--muted)]">Super Admin is reserved for the existing sole CommsIQ super admin and cannot be assigned to another user. Locked Super Admin rooftop access cannot be removed or downgraded here. Removing all rooftop selections for any other user disables that person’s CommsIQ access only; it does not delete or disable their shared AutomotiveIQ Auth account.</div>
           <button onClick={()=>void save()} disabled={saving || !draft.fullName.trim() || (!draft.userId && !draft.email.trim())} className="mt-4 min-h-11 w-full rounded-xl bg-[var(--brand)] px-4 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving…' : selected ? 'Save user access' : 'Invite and grant access'}</button>
         </div>
       </div>
