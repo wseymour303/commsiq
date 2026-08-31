@@ -6,6 +6,9 @@ export const runtime = 'nodejs';
 
 type Role = 'user' | 'manager' | 'admin' | 'super_admin';
 type MembershipInput = { rooftopId: string; role: Role };
+type AccessRow = { user_id: string; rooftop_id: string; role: Role; active: boolean };
+type ProfileRow = { user_id: string; email: string; full_name: string; title: string | null; status: string };
+
 const ROLES = new Set<Role>(['user','manager','admin','super_admin']);
 const ROOFTOP_IDS = new Set<string>(COMMSIQ_ROOFTOPS.map(row => row.id));
 
@@ -20,17 +23,17 @@ function memberships(value: unknown) {
   return [...map.values()];
 }
 
-async function authUsers(admin: Awaited<ReturnType<typeof requireCommsIqSuperAdmin>>['admin']) {
+async function authUsers(admin: any) {
   const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (error) throw error;
-  return data.users;
+  return data.users as any[];
 }
 
-async function saveAccess(admin: Awaited<ReturnType<typeof requireCommsIqSuperAdmin>>['admin'], userId: string, rows: MembershipInput[]) {
+async function saveAccess(admin: any, userId: string, rows: MembershipInput[]) {
   const selected = new Set(rows.map(row => row.rooftopId));
   const { data: existing, error: existingError } = await admin.from('commsiq_access').select('rooftop_id').eq('user_id', userId);
   if (existingError) throw existingError;
-  const disable = (existing ?? []).map(row => String(row.rooftop_id)).filter(id => !selected.has(id));
+  const disable = ((existing ?? []) as Array<{ rooftop_id: string }>).map(row => String(row.rooftop_id)).filter(id => !selected.has(id));
   if (disable.length) {
     const { error } = await admin.from('commsiq_access').update({ active: false, updated_at: new Date().toISOString() }).eq('user_id', userId).in('rooftop_id', disable);
     if (error) throw error;
@@ -44,21 +47,22 @@ async function saveAccess(admin: Awaited<ReturnType<typeof requireCommsIqSuperAd
 export async function GET(request: Request) {
   try {
     const { admin } = await requireCommsIqSuperAdmin(request);
-    const { data: access, error: accessError } = await admin.from('commsiq_access').select('user_id,rooftop_id,role,active').order('created_at');
+    const { data: accessRows, error: accessError } = await admin.from('commsiq_access').select('user_id,rooftop_id,role,active').order('created_at');
     if (accessError) throw accessError;
-    const ids = [...new Set((access ?? []).map(row => String(row.user_id)))];
+    const access = (accessRows ?? []) as AccessRow[];
+    const ids = [...new Set(access.map(row => row.user_id))];
     if (!ids.length) return NextResponse.json({ users: [] });
-    const [{ data: profiles, error: profileError }, users] = await Promise.all([
+    const [{ data: profileRows, error: profileError }, users] = await Promise.all([
       admin.from('profiles').select('user_id,email,full_name,title,status').in('user_id', ids),
       authUsers(admin)
     ]);
     if (profileError) throw profileError;
-    const profileMap = new Map((profiles ?? []).map(row => [String(row.user_id), row]));
-    const authMap = new Map(users.map(user => [user.id, user]));
+    const profileMap = new Map(((profileRows ?? []) as ProfileRow[]).map(row => [row.user_id, row]));
+    const authMap = new Map(users.map(user => [String(user.id), user]));
     return NextResponse.json({ users: ids.map(userId => {
       const profile = profileMap.get(userId);
       const auth = authMap.get(userId);
-      const factors = ((auth as unknown as { factors?: Array<{ status?: string }> } | undefined)?.factors ?? []);
+      const factors = ((auth as { factors?: Array<{ status?: string }> } | undefined)?.factors ?? []);
       return {
         userId,
         email: String(profile?.email ?? auth?.email ?? ''),
@@ -69,7 +73,7 @@ export async function GET(request: Request) {
         emailConfirmed: Boolean(auth?.email_confirmed_at),
         lastSignInAt: auth?.last_sign_in_at ?? null,
         mfaVerified: factors.some(factor => factor.status === 'verified'),
-        memberships: (access ?? []).filter(row => String(row.user_id) === userId).map(row => ({ rooftopId: String(row.rooftop_id), role: row.role, active: Boolean(row.active) }))
+        memberships: access.filter(row => row.user_id === userId).map(row => ({ rooftopId: row.rooftop_id, role: row.role, active: row.active }))
       };
     }).sort((a,b) => (a.fullName || a.email).localeCompare(b.fullName || b.email)) });
   } catch (error) {
@@ -89,7 +93,7 @@ export async function POST(request: Request) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !fullName || !access.length) return NextResponse.json({ error: 'Email, full name, and at least one rooftop are required.' }, { status: 400 });
 
     const users = await authUsers(admin);
-    let user = users.find(row => row.email?.toLowerCase() === email) ?? null;
+    let user = users.find(row => String(row.email ?? '').toLowerCase() === email) ?? null;
     let invited = false;
     if (!user) {
       const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { full_name: fullName, title } });
