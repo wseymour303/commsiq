@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export type CommsIqAdminContext = {
   userId: string;
-  admin: ReturnType<typeof createClient>;
+  admin: any;
 };
 
 function decodeAal(token: string) {
@@ -33,7 +33,7 @@ export async function requireCommsIqSuperAdmin(request: Request): Promise<CommsI
   const { data: userData, error: userError } = await verifier.auth.getUser(token);
   if (userError || !userData.user) throw new Error('ADMIN_UNAUTHORIZED');
 
-  const admin = createClient(url, serviceRoleKey, {
+  const admin: any = createClient(url, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
   const { count, error: accessError } = await admin
