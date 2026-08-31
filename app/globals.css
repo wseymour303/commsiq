@@ -40,7 +40,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 
-.auth-input {
+.auth-input,
+.admin-input {
   box-sizing: border-box;
   width: 100%;
   min-height: 44px;
@@ -54,8 +55,10 @@ button { -webkit-tap-highlight-color: transparent; }
   box-shadow: none;
   outline: none;
 }
-.auth-input::placeholder { color: #98a2b3; opacity: 1; }
-.auth-input:focus {
+.auth-input::placeholder,
+.admin-input::placeholder { color: #98a2b3; opacity: 1; }
+.auth-input:focus,
+.admin-input:focus {
   border-color: #7f9db9;
   box-shadow: 0 0 0 3px rgba(23,59,103,.08);
 }
