@@ -29,6 +29,17 @@ async function authUsers(admin: any) {
   return data.users as any[];
 }
 
+async function activeSuperAdminRooftops(admin: any, userId: string) {
+  const { data, error } = await admin
+    .from('commsiq_access')
+    .select('rooftop_id')
+    .eq('user_id', userId)
+    .eq('role', 'super_admin')
+    .eq('active', true);
+  if (error) throw error;
+  return new Set(((data ?? []) as Array<{ rooftop_id: string }>).map(row => String(row.rooftop_id)));
+}
+
 async function saveAccess(admin: any, userId: string, rows: MembershipInput[]) {
   const selected = new Set(rows.map(row => row.rooftopId));
   const { data: existing, error: existingError } = await admin.from('commsiq_access').select('rooftop_id').eq('user_id', userId);
@@ -91,6 +102,7 @@ export async function POST(request: Request) {
     const title = String(body.title ?? '').trim() || null;
     const access = memberships(body.memberships);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !fullName || !access.length) return NextResponse.json({ error: 'Email, full name, and at least one rooftop are required.' }, { status: 400 });
+    if (access.some(row => row.role === 'super_admin')) return NextResponse.json({ error: 'Super Admin is reserved for the existing sole CommsIQ super admin.' }, { status: 400 });
 
     const users = await authUsers(admin);
     let user = users.find(row => String(row.email ?? '').toLowerCase() === email) ?? null;
@@ -123,7 +135,21 @@ export async function PATCH(request: Request) {
     const title = String(body.title ?? '').trim() || null;
     const access = memberships(body.memberships);
     if (!/^[0-9a-f-]{36}$/i.test(userId) || !fullName) return NextResponse.json({ error: 'A valid user and full name are required.' }, { status: 400 });
-    if (actorId === userId && !access.some(row => row.role === 'super_admin')) return NextResponse.json({ error: 'You cannot remove your own final CommsIQ super-admin access.' }, { status: 400 });
+
+    if (userId !== actorId && access.some(row => row.role === 'super_admin')) {
+      return NextResponse.json({ error: 'Super Admin cannot be assigned to another CommsIQ user.' }, { status: 400 });
+    }
+
+    if (userId === actorId) {
+      const protectedRooftops = await activeSuperAdminRooftops(admin, actorId);
+      for (const rooftopId of protectedRooftops) {
+        const submitted = access.find(row => row.rooftopId === rooftopId);
+        if (!submitted || submitted.role !== 'super_admin') {
+          return NextResponse.json({ error: 'Your existing Super Admin access is locked and cannot be removed or downgraded in CommsIQ.' }, { status: 400 });
+        }
+      }
+    }
+
     const { data: profile, error: lookupError } = await admin.from('profiles').select('status').eq('user_id', userId).maybeSingle();
     if (lookupError) throw lookupError;
     if (!profile) return NextResponse.json({ error: 'Profile not found.' }, { status: 404 });
