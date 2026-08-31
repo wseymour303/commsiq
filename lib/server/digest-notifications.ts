@@ -1,7 +1,5 @@
-import 'server-only';
-
 import { createClient } from '@supabase/supabase-js';
-import { rooftopName } from '@/lib/rooftops';
+import { rooftopName } from '../rooftops';
 
 const RESEND_API_URL = 'https://api.resend.com/emails';
 const WAIT_THRESHOLD_MINUTES = 30;
