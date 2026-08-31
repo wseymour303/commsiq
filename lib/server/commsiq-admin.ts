@@ -36,14 +36,16 @@ export async function requireCommsIqSuperAdmin(request: Request): Promise<CommsI
   const admin: any = createClient(url, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
-  const { count, error: accessError } = await admin
+
+  const { data: superAdminRows, error: accessError } = await admin
     .from('commsiq_access')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', userData.user.id)
+    .select('user_id')
     .eq('role', 'super_admin')
     .eq('active', true);
   if (accessError) throw accessError;
-  if ((count ?? 0) < 1) throw new Error('ADMIN_FORBIDDEN');
+
+  const superAdminIds = [...new Set((superAdminRows ?? []).map((row: { user_id: string }) => String(row.user_id)))];
+  if (superAdminIds.length !== 1 || superAdminIds[0] !== userData.user.id) throw new Error('ADMIN_SINGLETON_VIOLATION');
 
   return { userId: userData.user.id, admin };
 }
@@ -52,7 +54,7 @@ export function adminErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : '';
   if (message === 'ADMIN_UNAUTHORIZED') return { status: 401, error: 'Unauthorized.' };
   if (message === 'ADMIN_MFA_REQUIRED') return { status: 403, error: 'A verified MFA session is required.' };
-  if (message === 'ADMIN_FORBIDDEN') return { status: 403, error: 'Super-admin access is required.' };
+  if (message === 'ADMIN_SINGLETON_VIOLATION') return { status: 403, error: 'CommsIQ requires exactly one active super admin. Resolve the access configuration before using User Management.' };
   if (message === 'ADMIN_CONFIG_MISSING') return { status: 503, error: 'Admin server configuration is incomplete.' };
   return { status: 500, error: error instanceof Error ? error.message : 'Admin operation failed.' };
 }
