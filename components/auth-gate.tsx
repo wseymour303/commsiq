@@ -216,7 +216,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <FieldLabel htmlFor="mfa">AUTHENTICATOR CODE</FieldLabel>
             <input id="mfa" inputMode="numeric" autoComplete="one-time-code" value={mfaCode} onChange={(e)=>setMfaCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="000000" className="auth-input text-center tracking-[0.22em]" />
             {error && <ErrorText>{error}</ErrorText>}
-            <PrimaryButton busy={busy}>{busy ? 'Verifying...' : 'Verify authenticator'}</PrimaryButton>
+            <div className="mt-3"><PrimaryButton busy={busy}>{busy ? 'Verifying...' : 'Verify authenticator'}</PrimaryButton></div>
           </form>}
         </div>
       </section>
