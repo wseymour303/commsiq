@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { rooftopName } from '@/lib/rooftops';
 import { useRooftopScope, type Role } from './rooftop-scope';
+import { NotificationPreferences } from './notification-preferences';
 
 type ProfileRow = { full_name: string | null; email: string | null; title: string | null };
 
@@ -83,7 +84,7 @@ export function AccountMenu() {
 
   return <div ref={rootRef} className="relative">
     <button type="button" onClick={() => setOpen(value => !value)} aria-label="Open account menu" aria-expanded={open} className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-white text-xs font-semibold text-[var(--text)] transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-subtle)]">{loading ? '…' : badge}</button>
-    {open && <div className="absolute right-0 top-12 z-[90] w-[min(92vw,380px)] overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_55px_rgba(15,23,42,.18)]">
+    {open && <div className="absolute right-0 top-12 z-[90] max-h-[min(82vh,760px)] w-[min(94vw,400px)] overflow-y-auto overscroll-contain rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_55px_rgba(15,23,42,.18)]">
       <div className="border-b border-[var(--border)] p-4">
         <div className="flex items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-sm font-semibold text-white">{badge}</div><div className="min-w-0"><div className="truncate text-sm font-semibold">{name}</div><div className="truncate text-xs text-[var(--muted)]">{email || 'Work email unavailable'}</div></div></div>
         <div className="mt-3 flex flex-wrap gap-2"><span className="rounded-full bg-[var(--brand-soft)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[.08em] text-[var(--brand)]">{roleLabel(highestRole)}</span>{profile?.title && <span className="rounded-full bg-[var(--surface-subtle)] px-2.5 py-1 text-[10px] font-medium text-[var(--muted)]">{profile.title}</span>}</div>
@@ -97,6 +98,8 @@ export function AccountMenu() {
         </select>
         <div className="mt-2 text-[11px] text-[var(--muted-2)]">Currently viewing: <span className="font-semibold text-[var(--text)]">{selectedLabel}</span></div>
       </div>
+
+      <NotificationPreferences access={access} />
 
       <div className="p-4">
         <div className="text-[10px] font-semibold uppercase tracking-[.1em] text-[var(--muted-2)]">Authorized rooftops</div>
